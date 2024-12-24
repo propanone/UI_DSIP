@@ -2,8 +2,7 @@ import streamlit as st
 import numpy as np
 import pickle
 
-st.set_page_config(page_title="ML API - Client Risky Prediction")
-
+st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="risk.png", initial_sidebar_state = 'auto')
 st.markdown("""
 <style>
     .stApp {
@@ -31,6 +30,7 @@ st.markdown("""
         padding: 15px;
         background-color: #f0f0f0;
         border-radius: 5px;
+
     }
 </style>
 """, unsafe_allow_html=True)
@@ -421,6 +421,7 @@ def get_level(value, ranges):
 
 def main():
     st.title('Client Risky Prediction')
+    st.image("icon.png", width = 300)
 
     with st.form('prediction_form'):
         col1, col2 = st.columns(2)
