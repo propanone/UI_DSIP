@@ -36,7 +36,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Load model
-model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\models\\random_forest_final_model.pkl", "rb"))
+#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\models\\random_forest_final_model.pkl", "rb"))
 
 # Predefined mappings
 predefined_mappings = {
