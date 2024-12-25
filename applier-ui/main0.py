@@ -1,10 +1,29 @@
 import streamlit as st
 import numpy as np
 import pickle
+import os
+import pandas as pd
+import requests
+from requests.auth import HTTPBasicAuth
+import dotenv
 
+from src.dates import get_previous_month_name
+from src.models import load_models, get_model_name, load_model_to_dict
+from src.constants import IRON, CABLING, TIMBER, CEMENT, READY_MIXED_CONCRETE, PRODUCTS
+from src.discretizer import discretize, reverse
 
+MODELS_PATH = 'data/models'
+
+dotenv.load_dotenv()
 
 st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="risk.png", initial_sidebar_state = 'auto')
+
+models = load_models(MODELS_PATH)
+
+model_file = st.selectbox(label="Model", options=models, format_func=get_model_name)
+
+
+
 st.markdown("""
 <style>
     .stApp {
@@ -154,7 +173,8 @@ def get_level(value, ranges):
 def main():
     st.title('Client Risky Prediction')
     st.image("icon.png", width = 300)
-
+    col1, col2, col3 = st.columns(3, gap='medium')
+    
     with st.form('prediction_form'):
         col1, col2 = st.columns(2)
 
