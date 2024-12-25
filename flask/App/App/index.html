@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML API - Client Risky Prediction</title>
+    <link href="https://fonts.googleapis.com/css?family=Pacifico" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Arimo" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Hind:300" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300" rel="stylesheet">
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+
+<body>
+    <div class="login">
+        <h1>Client Risky Prediction</h1>
+    
+        <form action="{{ url_for('predict') }}" method="post">
+            <div class="form-group">
+                <label for="puissance">Puissance</label>
+                <input type="number" id="puissance" name="puissance" required="required" list="puissance-options" />
+                <datalist id="puissance-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                </datalist>
+            </div>
+            
+    
+            <div class="form-group">
+                <label for="age_objet_assuree">Âge de l'objet assuré</label>
+                <input type="number" id="age_objet_assuree" name="age_objet_assuree" required="required" list="age-options" />
+                <datalist id="age-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                </datalist>
+            </div>
+            
+            <div class="form-group">
+                <label for="valeur_venale">Valeur vénale</label>
+                <input type="number" id="valeur_venale" name="valeur_venale" required="required" list="valeur-options" />
+                <datalist id="valeur-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                </datalist>
+            </div>
+            <div class="form-group">
+                <label for="valeur_neuve">Valeur neuve</label>
+                <input type="number" id="valeur_neuve" name="valeur_neuve" required="required" list="valeur-neuve-options" />
+                <datalist id="valeur-neuve-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                    <option value="8.0">
+                </datalist>
+            </div>
+            
+            <div class="form-group">
+                <label for="charge_utile">Charge utile</label>
+                <input type="number" id="charge_utile" name="charge_utile" required="required" list="charge-utile-options" />
+                <datalist id="charge-utile-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                </datalist>
+            </div>
+            
+            <div class="form-group">
+                <label for="anciennete">Ancienneté</label>
+                <input type="number" id="anciennete" name="anciennete" required="required" list="anciennete-options" />
+                <datalist id="anciennete-options">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                </datalist>
+            </div>
+            
+            <div class="form-group">
+                <label for="classe">Classe</label>
+                <input type="number" id="classe" name="classe" required="required" list="classe-options" />
+                <datalist id="classe-options">
+                    <option value="0.0">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                    <option value="8.0">
+                    <option value="9.0">
+                    <option value="10.0">
+                    <option value="11.0">
+                </datalist>
+            </div>
+            
+            <div class="form-group">
+                <label for="age_client">Âge du client</label>
+                <input type="number" id="age_client" name="age_client" required="required" list="age-client-options" />
+                <datalist id="age-client-options">
+                    <option value="0.0">
+                    <option value="1.0">
+                    <option value="2.0">
+                    <option value="3.0">
+                    <option value="4.0">
+                    <option value="5.0">
+                    <option value="6.0">
+                    <option value="7.0">
+                    <option value="8.0">
+                </datalist>
+            </div>
+            
+    
+            <div class="form-group">
+                <label for="usage">Usage</label>
+                <select id="usage" name="usage" required="required">
+                    <option value="" disabled selected>Select usage</option>
+                    <option value="VP">VP</option>
+                    <option value="u1">u1</option>
+                    <option value="moto">moto</option>
+                    <option value="U2">U2</option>
+                    <option value="taxi">taxi</option>
+                    <option value="engin">engin</option>
+                    <option value="autre">autre</option>
+                    <option value="transport_rural">transport_rural</option>
+                    <option value="louage">louage</option>
+                    <option value="taxi_collectif">taxi_collectif</option>
+                </select>
+            </div>
+    
+            <div class="form-group">
+                <label for="activite">Activité</label>
+                <select id="activite" name="activite" required="required">
+                    <option value="" disabled selected>Select activité</option>
+                    <option value="EDUCATION_FORMATION">EDUCATION_FORMATION</option>
+                    <option value="PROFESSIONS_MEDICALES">PROFESSIONS_MEDICALES</option>
+                    <option value="EMPLOYE">EMPLOYE</option>
+                    <option value="RETRAITE">RETRAITE</option>
+                    <option value="ACTIVITES_COMMERCIALES">ACTIVITES_COMMERCIALES</option>
+                    <option value="AGRICULTURE">AGRICULTURE</option>
+                    <option value="CORPS_ACTIFS">CORPS_ACTIFS</option>
+                    <option value="RESIDENT_A_L'ETRANGER">RESIDENT_A_L'ETRANGER</option>
+                    <option value="ARTISAN">ARTISAN</option>
+                    <option value="INGENIEUR">INGENIEUR</option>
+                    <option value="CHAUFFEUR">CHAUFFEUR</option>
+                    <option value="PARAMEDICAL">PARAMEDICAL</option>
+                    <option value="OUVRIER">OUVRIER</option>
+                    <option value="TAXI_LOUAGE_TRASPORT_RURAL">TAXI_LOUAGE_TRASPORT_RURAL</option>
+                    <option value="ARCHITECTURE_BTP_IMMOBILIER">ARCHITECTURE_BTP_IMMOBILIER</option>
+                    <option value="TECHNICIEN">TECHNICIEN</option>
+                    <option value="GERANT_DIRIGEANT">GERANT_DIRIGEANT</option>
+                    <option value="PROFESSIONNEL_CONSULTANT_EXPERT">PROFESSIONNEL_CONSULTANT_EXPERT</option>
+                    <option value="METIERS_LEGAUX">METIERS_LEGAUX</option>
+                    <option value="INFORMATIQUE">INFORMATIQUE</option>
+                    <option value="DIRECTEUR">DIRECTEUR</option>
+                    <option value="TOURISME">TOURISME</option>
+                    <option value="ACTIVITES_SPORTIVES">ACTIVITES_SPORTIVES</option>
+                    <option value="AUTO_ECOLE">AUTO_ECOLE</option>
+                    <option value="TRANSPORT_AEREEN">TRANSPORT_AEREEN</option>
+                    <option value="ACTIVITES_ARTISTIQUES">ACTIVITES_ARTISTIQUES</option>
+                    <option value="ETAT">ETAT</option>
+                    <option value="TRANSPORT">TRANSPORT</option>
+                    <option value="ACTIVITES_FINACIAIRES_ET_BANCAIRES">ACTIVITES_FINACIAIRES_ET_BANCAIRES</option>
+                    <option value="JOURNALISME">JOURNALISME</option>
+                    <option value="DIPLOMATIE">DIPLOMATIE</option>
+                    <option value="ASSOCIATIONS_ONG">ASSOCIATIONS_ONG</option>
+                    <option value="SANS_PROFESSION">SANS_PROFESSION</option>
+                    <option value="ACTIVITES_INDUSTRIELLES">ACTIVITES_INDUSTRIELLES</option>
+                </select>
+            </div>
+            
+    
+            <div class="form-group">
+                <label for="delegation">Délégation</label>
+                <select id="delegation" name="delegation" required="required">
+                    <option value="" disabled selected>Select délégation</option>
+                    <option value="Sfax Ville">Sfax Ville</option>
+                    <option value="Ariana Ville">Ariana Ville</option>
+                    <option value="Kairouan Sud">Kairouan Sud</option>
+                    <option value="Zarzis">Zarzis</option>
+                    <option value="Monastir">Monastir</option>
+                    <option value="Le Kef Est">Le Kef Est</option>
+                    <option value="Gafsa Sud">Gafsa Sud</option>
+                    <option value="Moknine">Moknine</option>
+                    <option value="Le Bardo">Le Bardo</option>
+                    <option value="El Mourouj">El Mourouj</option>
+                    <option value="Sakiet Ezzit">Sakiet Ezzit</option>
+                    <option value="Sousse Ville">Sousse Ville</option>
+                    <option value="Hammamet">Hammamet</option>
+                    <option value="Msaken">Msaken</option>
+                    <option value="Mannouba">Mannouba</option>
+                    <option value="Sakiet Eddaier">Sakiet Eddaier</option>
+                    <option value="Sousse Riadh">Sousse Riadh</option>
+                    <option value="Jendouba Nord">Jendouba Nord</option>
+                    <option value="El Menzah">El Menzah</option>
+                    <option value="Bizerte Nord">Bizerte Nord</option>
+                    <option value="Ben Arous">Ben Arous</option>
+                    <option value="Beja Nord">Beja Nord</option>
+                    <option value="Mahdia">Mahdia</option>
+                    <option value="Sfax Sud">Sfax Sud</option>
+                    <option value="Nabeul">Nabeul</option>
+                    <option value="La Soukra">La Soukra</option>
+                    <option value="Sousse Jaouhara">Sousse Jaouhara</option>
+                    <option value="Hammam Sousse">Hammam Sousse</option>
+                    <option value="Siliana Sud">Siliana Sud</option>
+                    <option value="Korba">Korba</option>
+                    <option value="Kasserine Nord">Kasserine Nord</option>
+                    <option value="Rades">Rades</option>
+                    <option value="La Marsa">La Marsa</option>
+                    <option value="Fouchana">Fouchana</option>
+                    <option value="El Kabbaria">El Kabbaria</option>
+                    <option value="Raoued">Raoued</option>
+                    <option value="El Omrane Superieur">El Omrane Superieur</option>
+                    <option value="Houmet Essouk">Houmet Essouk</option>
+                    <option value="Nouvelle Medina">Nouvelle Medina</option>
+                    <option value="Gabes Medina">Gabes Medina</option>
+                    <option value="Sidi Bouzid Ouest">Sidi Bouzid Ouest</option>
+                    <option value="El Ouerdia">El Ouerdia</option>
+                    <option value="Ezzahra">Ezzahra</option>
+                    <option value="Feriana">Feriana</option>
+                    <option value="Bou Mhel El Bassatine">Bou Mhel El Bassatine</option>
+                    <option value="Kalaat El Kebira">Kalaat El Kebira</option>
+                    <option value="Ksibet El Mediouni">Ksibet El Mediouni</option>
+                    <option value="Zaghouan">Zaghouan</option>
+                    <option value="Ksar Helal">Ksar Helal</option>
+                    <option value="Midoun">Midoun</option>
+                    <option value="Tataouine Sud">Tataouine Sud</option>
+                    <option value="Hammam Lif">Hammam Lif</option>
+                    <option value="Megrine">Megrine</option>
+                    <option value="El Ksar">El Ksar</option>
+                    <option value="Medenine Sud">Medenine Sud</option>
+                    <option value="Grombalia">Grombalia</option>
+                    <option value="Kelibia">Kelibia</option>
+                    <option value="Bou Merdes">Bou Merdes</option>
+                    <option value="El Hrairia">El Hrairia</option>
+                    <option value="Sidi Hassine">Sidi Hassine</option>
+                    <option value="Kalaat Essghira">Kalaat Essghira</option>
+                    <option value="Ezzouhour (Tunis)">Ezzouhour (Tunis)</option>
+                    <option value="La Goulette">La Goulette</option>
+                    <option value="Mohamadia">Mohamadia</option>
+                    <option value="Hammam Chatt">Hammam Chatt</option>
+                    <option value="Ghardimaou">Ghardimaou</option>
+                    <option value="La Chebba">La Chebba</option>
+                    <option value="Mornag">Mornag</option>
+                    <option value="Le Kef Ouest">Le Kef Ouest</option>
+                </select>
+            </div>
+            
+    
+            <div class="form-group">
+                <label for="civilite">Civilité</label>
+                <select id="civilite" name="civilite" required="required">
+                    <option value="" disabled selected>Select civilité</option>
+                    <option value="Mr">Mr</option>
+                    <option value="Mme">Mme</option>
+                    <option value="mult_CT">mult_CT</option>
+                    <option value="Entreprise">Entreprise</option>
+                    <option value="Org">Org</option>
+                    <option value="Couple">Couple</option>
+                    <option value="Etablissement">Etablissement</option>
+                    <option value="Gov">Gov</option>
+                </select>
+            </div>
+            
+    
+            <button type="submit">Predict</button>
+        </form>
+    
+        <div class="prediction-result">
+            {{ prediction_text }}
+        </div>
+    </div>
+</body>
+</html>

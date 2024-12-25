@@ -1,10 +1,7 @@
 import streamlit as st
 import numpy as np
 import pickle
-from joblib import load
 
-#model = load('random_forest_final_model.joblib')
-#model = load("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\models\\random_forest_final_model.joblib")
 
 
 st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="risk.png", initial_sidebar_state = 'auto')
@@ -41,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Load model
-#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\models\\random_forest_final_model.pkl", "rb"))
+model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\random_forest.pkl", "rb"))
 
 # Predefined mappings
 predefined_mappings = {
@@ -143,21 +140,10 @@ predefined_mappings = {
     "delegation": [
         "Ariana Ville","Sfax Ville","Monastir","El Menzah","Le Bardo","Mannouba","El Mourouj","Hammamet","Sousse Ville","Sakiet Ezzit","Sousse Jaouhara","La Marsa","La Soukra","Nabeul","Ben Arous", "Msaken", "Raoued",  "Sousse Riadh",   "Kairouan Sud",  "Moknine",   "Bizerte Nord",  "Sakiet Eddaier",  "Rades",  "El Omrane Superieur",  "Ezzahra",  "Hammam Sousse",  "Le Kef Est",  "Nouvelle Medina",   "Sfax Sud",   "El Kabbaria",  "Megrine",  "Bou Mhel El Bassatine",  "Hammam Lif",  "Mahdia",  "El Ouerdia",  "La Goulette",  "Gafsa Sud",  "Jendouba Nord",  "Ksibet El Mediouni",  "Beja Nord",  "Carthage",  "Houmet Essouk",  "Korba",   "Fouchana",   "Hammam Chatt",   "Bab Bhar",   "Kalaa El Kebira",   "Zarzis",   "Ettahrir",   "Ksar Helal",   "Ezzouhour (Tunis)",  "Siliana Sud",  "Kalaa Essghira",  "Kelibia",  "Oued Ellil",  "Akouda",  "Dar Chaabane Elfehri",  "Kasserine Nord",  "El Hrairia",  "Gabes Medina",  "Mornag",  "Mnihla",  "Sayada Lamta Bou Hajar",  "Midoun",  "Sidi El Bechir",  "Cite El Khadra",  "Grombalia",  "Mohamadia",  "Zaghouan",  "Sfax Est", "Beni Khiar",   "Sidi Hassine",  "Ettadhamen",  "La Medina",  "Teboulba",  "Feriana",  "Soliman",  "Jemmal",  "La Chebba",  "Mejez El Bab",  "Sidi Bouzid Ouest",   "Sahline",   "Bembla",   "El Kram",  "Gabes Sud",  "Menzel Bourguiba",  "Menzel Temime", "Medenine Sud",   "El Omrane"    "Bou Merdes",   "El Ksar",   "Ras Jebel",   "Ajim",   "Mornaguia",   "Le Kef Ouest",   "Tozeur",   "Beni Khalled",   "Kebili Sud",   "Douar Hicher",   "Menzel Jemil",   "Testour",   "Ghardimaou",  "Tajerouine", "Enfidha", "Gabes Ouest", "Essijoumi", "Ksour Essaf", "Douz", "Menzel Bouzelfa", "Tataouine Sud", "Ouerdanine", "Jedaida", "Souassi",  "El Hamma",  "El Jem",  "Bou Argoub", "Zeramdine",  "Tinja",  "Jebel Jelloud",  "Sidi Thabet",  "Dahmani",  "Mahras",  "Bekalta",  "Jebeniana",  "Kairouan Nord",  "Makthar",   "Ouled Chamakh",  "Agareb",  "Bou Salem",  "Gaafour",  "Bir Ali Ben Khelifa",  "Jarzouna",  "El Haouaria",  "Sakiet Sidi Youssef",  "Bou Hajla",  "Teboursouk",  "Ben Guerdane",  "El Guettar",  "Ain Draham",   "Sned",  "Chorbane",  "Le Sers",  "Ezzouhour (Kasserine)",  "El Amra",  "Nebeur",   "Hammam El Ghezaz",   "Sbikha",   "Bou Ficha",   "Fernana",  "Beni Hassen",   "El Ksour",  "Foussana",  "El Hencha",   "Sidi Bou Ali",  "Degueche",   "Kalaat Sinane",  "Sidi Alouene",  "Hammam Zriba",  "Kerkenah",  "Metlaoui",  "Oueslatia",  "Borj El Amri",  "Bou Arada",  "Tebourba",   "Bizerte Sud",  "El Mida",  "Hergla",  "Thala", "El Mdhilla",   "Sbeitla", "Tabarka",  "Nasrallah",  "El Fahs",  "Bir Mcherga",  "Souk El Ahad",  "Jendouba", "Cherarda", "Mareth", "Mateur", "Hajeb El Ayoun", "Le Krib", "Ennadhour", "Moulares",  "Nefza", "Mejel Bel Abbes",  "El Metouia",  "Haffouz",  "Oued Mliz", "Chebika", "Ghar El Melh", "Bab Souika", "El Alia", "El Ala", "Tataouine Nord", "Menzel Chaker", "Kalaat Landlous", "Esskhira", "Rohia",  "Regueb",   "Bargou", "Sidi El Heni",  "Redeyef",  "Kesra",  "Hassi El Frid",  "Sidi Aich",  "Nefta",  "Beni Khedache",  "Jerissa",  "Nouvelle Matmata",  "Kebili Nord",  "Ghomrassen",  "Melloulech",  "Utique",  "Kalaa El Khasba",  "El Battan",  "Thibar",  "Maknassy",  "Amdoun",  "Takelsa",  "Ghannouche",  "Sidi Bouzid Est",  "Goubellat",   "El Aroussa",  "Saouef",  "Sidi Bou Rouis",  "Sejnane",  "Kasserine Sud",  "Smar",  "Bir El Haffey",  "Ouled Haffouz",  "Ben Oun",  "Kondar",   "Mezzouna",  "Jilma", "Sbiba",  "Ghraiba",  "Bir Lahmar", "Beja Sud",  "Joumine",  "Dhehiba",  "Haidra",  "Hbira",  "Menzel Bouzaiene",  "Gafsa Nord", "Belkhir", "Cebbala", "Sidi Makhlouf", "Jediliane", "Touiref", "Balta Bou Aouene", "Menzel Habib", "Matmata", "Souk Jedid", "Tameghza","Remada","Medenine Nord","Hezoua","Ghezala","El Faouar","El Ayoun"
     ],
-    
-    "civilite": [
-        "Mr",
-        "Mme",
-        "mult_CT",
-        "Entreprise",
-        "Couple",
-        "Org",
-        "Etablissement",
-        "Gov"
-    ]
-
 
 }
 
+predefined_mappings["delegation_map"] = {delegation: idx for idx, delegation in enumerate(predefined_mappings["delegation"])}
 
 def get_level(value, ranges):
     for range_ in ranges:
@@ -187,8 +173,8 @@ def main():
             st.subheader("Client Info") 
             age_client = st.number_input('Âge du client', min_value=18)
             #sexe = st.selectbox('Sexe', ['M', 'F'])
-            civilite = st.selectbox('Civilite',  options=list(predefined_mappings["civilite"]))
-            delegation = st.selectbox('Délégation',  options=list(predefined_mappings["delegation"]))
+            civilite = st.selectbox('Civilite',  options=list(predefined_mappings["civilite"].keys()))
+            delegation = st.selectbox('Delegation',  options=list(predefined_mappings["delegation"]))
             activite = st.selectbox('Activité', options=list(predefined_mappings["activite"].keys()))
             anciennete = st.number_input('Ancienneté', min_value=0)
             classe = st.selectbox('Classe', options=list(predefined_mappings["classe"].keys()))
@@ -199,30 +185,34 @@ def main():
 
         if submitted:
             try:
-                puissance = get_level(puissance, predefined_mappings["puissance"])
-                age_objet_assuree = get_level(age_objet_assuree, predefined_mappings["age_objet_assuree"])
-                valeur_venale = get_level(valeur_venale, predefined_mappings["valeur_ranges"])
-                valeur_neuve = get_level(valeur_neuve, predefined_mappings["valeur_ranges"])
-                Charge_utile = get_level(charge_utile, predefined_mappings["charge_utile"])
-                anciennete = get_level(anciennete, predefined_mappings["anciennete"])
+                PSS = get_level(puissance, predefined_mappings["puissance"])
+                CIV =  predefined_mappings["civilite"]
+                AGO = get_level(age_objet_assuree, predefined_mappings["age_objet_assuree"])
+                VV = get_level(valeur_venale, predefined_mappings["valeur_ranges"])
+                VN = get_level(valeur_neuve, predefined_mappings["valeur_ranges"])
+                CU = get_level(charge_utile, predefined_mappings["charge_utile"])
+                ANC = get_level(anciennete, predefined_mappings["anciennete"])
                 #place = get_level(place, predefined_mappings["place"])
-                age_client = get_level(age_client, predefined_mappings["age_client"])
-
-                usage = predefined_mappings["usage"][usage] # [usage] is the input value from the user
-                activite = predefined_mappings["activite"][activite]
-                classe = predefined_mappings["classe"][classe]
+                AGE = get_level(age_client, predefined_mappings["age_client"])
+                DLG = predefined_mappings["delegation_map"][delegation]  # Convert delegation to numerical value
+                CIV = predefined_mappings["civilite"][civilite]
+                USG = predefined_mappings["usage"][usage] # [usage] is the input value from the user
+                ACT = predefined_mappings["activite"][activite]
+                CLS = predefined_mappings["classe"][classe]
                 #sexe = 0 if sexe == 'M' else 1
 
                 features = np.array([
-                    puissance, age_objet_assuree, valeur_venale, valeur_neuve,
-                    charge_utile, usage, anciennete, activite, classe,
-                    age_client, delegation
+                    PSS, AGO, VV, VN,
+                    CU, USG, ANC, ACT, CLS, 
+                    AGE, DLG, CIV
                 ]).reshape(1, -1)
 
-                prediction = model.predict(features)[0]
-                st.success(f"Résultat: {prediction[0]}")
+                prediction = model["model"].predict(features)[0]
+                st.success(f"Résultat: {prediction}")
             except ValueError as e:
                 st.error(f"Erreur: {e}")
+
+
 
 if __name__ == "__main__":
     main()
