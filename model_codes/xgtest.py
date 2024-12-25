@@ -9,20 +9,23 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
 import os
+from map import predefined_mappings
+
 
 
 # Cell 2: Configuration
 # Define features and file paths
 NUMERIC_FEATURES = [
-    "PSS", "AGO", "VV", "VN",
-    "CU", "ANC", "CLS", "AGE"
+   "PSS", "AGO", "VV", "VN",
+    "CU", "ANC", "CLS", "AGE", "PLA"
 ]
 
-CATEGORICAL_FEATURES = ["USG", "ACT", "DLG", "CIV"]
+CATEGORICAL_FEATURES = ["USG", "ACT", "DLG", "CIV", "MRQ", "CRS", "EN",  "SX"]
+
 
 # File paths
 INPUT_FILE_PATH = 'output.csv'  # Update this path
-MODEL_SAVE_PATH = 'models/xgboost_model.pkl'
+MODEL_SAVE_PATH = 'models_out/xgboost_model.pkl'
 
 
 # Cell 3: Load and Clean Data
@@ -31,7 +34,7 @@ data = pd.read_csv(INPUT_FILE_PATH, delimiter=',')
 print(data.columns)
 
 # Handle missing values
-data = data.dropna(subset=CATEGORICAL_FEATURES + NUMERIC_FEATURES)
+#data = data.dropna(subset=CATEGORICAL_FEATURES + NUMERIC_FEATURES)
 
 
 # Cell 4: Prepare Features
@@ -43,10 +46,21 @@ label_encoders = {}
 X = data[CATEGORICAL_FEATURES + NUMERIC_FEATURES].copy()
 
 # Encode categorical features
-for col in CATEGORICAL_FEATURES:
-    label_encoders[col] = LabelEncoder()
-    X[col] = label_encoders[col].fit_transform(X[col].astype(str))
+#for col in CATEGORICAL_FEATURES:
+#    label_encoders[col] = LabelEncoder()
+#    X[col] = label_encoders[col].fit_transform(X[col].astype(str))
 
+#for col in CATEGORICAL_FEATURES:
+#    if col in label_encoders:
+#        X[col] = X[col].apply(lambda x: x if x in label_encoders[col].classes_ else 'unknown')
+#        label_encoders[col].classes_ = np.append(label_encoders[col].classes_, 'unknown')
+#        X[col] = label_encoders[col].transform(X[col])
+#    else:
+#        raise ValueError(f"Missing encoder for {col}. Check your pipeline.")
+
+# During training
+for col in CATEGORICAL_FEATURES:
+    X[col] = X[col].map(predefined_mappings[col])       
 # Scale numeric features
 X[NUMERIC_FEATURES] = scaler.fit_transform(X[NUMERIC_FEATURES])
 
@@ -73,7 +87,7 @@ xgb = XGBClassifier(
     max_depth=14,
     random_state=1400,
     tree_method='hist',
-    enable_categorical=True,
+    enable_categorical=False,
     scale_pos_weight=scale_pos_weight
 )
 xgb.fit(X_train, y_train)
@@ -195,3 +209,23 @@ for bar in bars:
 
 plt.tight_layout()
 plt.show()
+
+from sklearn.metrics import roc_curve, auc
+
+# Calculate ROC curve
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
+roc_auc = auc(fpr, tpr)
+
+# Plot ROC curve
+plt.figure(figsize=(8, 6))
+plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.4f})')
+plt.plot([0, 1], [0, 1], color='gray', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic (ROC) Curve')
+plt.legend(loc='lower right')
+plt.show()
+
+print(f"ROC AUC Score: {roc_auc:.4f}")

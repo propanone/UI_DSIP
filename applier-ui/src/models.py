@@ -2,7 +2,7 @@ import glob
 import json
 import stringcase
 
-
+# KEEP IT AS IT IS
 def load_models(models_path: str):
     files = glob.glob(f'{models_path}/*.json')
     
