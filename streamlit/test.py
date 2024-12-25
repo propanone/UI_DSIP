@@ -1,6 +1,11 @@
 import streamlit as st
 import numpy as np
 import pickle
+from joblib import load
+
+#model = load('random_forest_final_model.joblib')
+#model = load("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\models\\random_forest_final_model.joblib")
+
 
 st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="risk.png", initial_sidebar_state = 'auto')
 st.markdown("""
