@@ -92,15 +92,6 @@ with open(MODEL_SAVE_PATH, 'wb') as file:
 print(f"Model and preprocessors saved to {MODEL_SAVE_PATH}")
 
 
-import os
-
-# Ensure the directory exists
-os.makedirs('modelss', exist_ok=True)
-
-# Update the save path
-MODEL_SAVE_PATH = 'modelss/random_forest.pkl'
-
-# Save the model and preprocessors
 model_artifacts = {
     'model': rf,
     'label_encoders': label_encoders,
@@ -213,34 +204,3 @@ for col in numeric_cols:
     print("\n" + "="*50 + "\n")  # Separator for better readability
 
 
-    # Add this code at the end of your notebook after training the model
-import os
-import joblib
-from sklearn.ensemble import RandomForestClassifier
-
-# Ensure the directory exists
-os.makedirs('modelsss', exist_ok=True)
-
-# Create a new model with the same parameters
-new_rf = RandomForestClassifier(
-    n_estimators=200,
-    max_depth=14,
-    random_state=1400
-)
-
-# Fit the model with your training data
-new_rf.fit(X_train, y_train)
-
-# Create the artifacts dictionary
-artifacts = {
-    'model': new_rf,
-    'label_encoders': label_encoders,  # Assuming `label_encoders` is defined earlier in your code
-    'scaler': scaler,                 # Assuming `scaler` is defined earlier in your code
-    'numeric_features': NUMERIC_FEATURES,  # Replace with your actual numeric features list
-    'categorical_features': CATEGORICAL_FEATURES  # Replace with your actual categorical features list
-}
-
-# Save using joblib (more reliable for scikit-learn objects)
-joblib.dump(artifacts, 'modelsss/random_forest.joblib')
-
-print("Model saved successfully!")
