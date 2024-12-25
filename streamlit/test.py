@@ -1,3 +1,4 @@
+# For this to work change the path to the model line 41 , 42
 import streamlit as st
 import numpy as np
 import pickle
