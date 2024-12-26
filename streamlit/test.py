@@ -6,7 +6,7 @@ from map import predefined_mappings
 
 
 
-st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="risk.png", initial_sidebar_state = 'auto')
+st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="assets/risk.png", initial_sidebar_state = 'auto')
 st.markdown("""
 <style>
     .stApp {
@@ -60,7 +60,6 @@ def get_level(value, ranges):
 
 def main():
     st.title('Client Risky Prediction')
-    st.image("icon.png", width = 300)
 
     with st.form('prediction_form'):
         col1, col2 = st.columns(2)
@@ -89,7 +88,7 @@ def main():
             puissance = st.number_input('Horsepower produced', min_value=0,max_value=999)
             energie = st.selectbox('Fuel Type', options=list(predefined_mappings["energie"].keys()))
             place = st.number_input('Number of Seats', min_value= 1, max_value= 99)
-            charge_utile = st.number_input('Payload Capacity (CU) tons', min_value=0,max_value=999)
+            charge_utile = st.number_input('Payload Capacity (CU) tons', min_value=0.0,max_value=999.0,step=0.1)
 
             valeur_venale = st.number_input('Estimated Value (VV)', min_value=0, max_value=9999999)
             valeur_neuve = st.number_input('Its New price was (VN)', min_value=0, max_value=9999999)

@@ -1,3 +1,4 @@
+# for testing
 import streamlit as st
 import numpy as np
 import pickle
@@ -171,7 +172,7 @@ def main():
                 place = st.number_input("Number of Seats", min_value=1, max_value=99)
                 st.markdown("<div class='feature-description'>Indicate the number of seats in the vehicle.</div>", unsafe_allow_html=True)
 
-                charge_utile = st.number_input("Payload Capacity (Tons)", min_value=0, max_value=999)
+                charge_utile = st.number_input("Payload Capacity (Tons)", min_value=0.0, max_value=999.0, step=0.1)
                 st.markdown("<div class='feature-description'>Specify the vehicle's payload capacity in tons.</div>", unsafe_allow_html=True)
 
                 valeur_venale = st.number_input("Estimated Value", min_value=0, max_value=9999999)
