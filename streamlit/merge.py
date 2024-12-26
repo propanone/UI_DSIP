@@ -110,8 +110,8 @@ def main():
        # Load appropriate model
     #path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
     #path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
-    path0 = "xgboost_model.pkl"
-    path1 = "random_forest.pkl"
+    path0 = "streamlit/xgboost_model.pkl"
+    path1 = "streamlit/random_forest.pkl"
     path = path0 if model_choice == "XGBoost" else path1  # Using your original paths
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
