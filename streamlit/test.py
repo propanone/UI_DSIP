@@ -79,7 +79,7 @@ def main():
             
             st.subheader("Vehicule Info")
             marque = st.selectbox('Vehicule Brand', options=list(predefined_mappings["marque"].keys()))
-            carrosserie = st.selectbox('Body Type', options=list(predefined_mappings["carrosserie"].keys()))
+            carrosserie = st.selectbox('Body Type(carroserie)', options=list(predefined_mappings["carrosserie"].keys()))
 
             usage = st.selectbox('Usage of Vehicule', options=list(predefined_mappings["usage"].keys()))
             classe = st.selectbox('Risk Classe Assginement', options=list(predefined_mappings["classe"]))
