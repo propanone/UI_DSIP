@@ -1,4 +1,10 @@
 pickle
 streamlit
 numpy
+pandas
+sklearn.model_selection 
+sklearn.preprocessing
+sklearn.metrics
 xgboost
+matplotlib.pyplot 
+seaborn 
