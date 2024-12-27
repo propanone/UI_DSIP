@@ -108,10 +108,10 @@ def main():
 
     st.title('Client Risky Prediction')
        # Load appropriate model
-    #path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
-    #path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
-    path0 = "streamlit/xgboost_model.pkl"
-    path1 = "streamlit/random_forest.pkl"
+    path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
+    path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
+    #path0 = "streamlit/xgboost_model.pkl"
+    #path1 = "streamlit/random_forest.pkl"
     path = path0 if model_choice == "XGBoost" else path1  # Using your original paths
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
@@ -199,7 +199,7 @@ def main():
                     st.success(f"Prediction: {'Risky Client' if prediction == 1 else 'Not Risky Client'}")
                     print("Probability:", probability)
                 else : 
-                    st.success(f"Prediction: {'Risky Client' if prediction == 0 else 'Not Risky Client'}")
+                    st.success(f"Prediction: {'Risky Client' if prediction == 1 else 'Not Risky Client'}")
                     print("Probability:", probability)
             except ValueError as e:
                 st.error(f"Error: {e}")
