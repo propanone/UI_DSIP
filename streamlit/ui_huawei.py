@@ -79,11 +79,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
-path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
-path2 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\mindspore_model.ckpt"
-#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\xgboost_model.pkl", "rb"))
-#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\random_forest.pkl", "rb"))
+#path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
+#path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
+#path2 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\mindspore_model.ckpt"
 
 
 def get_level(value, ranges):
@@ -135,8 +133,8 @@ def main():
        # Load appropriate model
     #path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
     #path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
-    #path0 = "streamlit/xgboost_model.pkl"
-    #path1 = "streamlit/random_forest.pkl"
+    path0 = "model_codes/models_out/xgboost_model.pkl"
+    path1 = "model_codes/models_out/random_forest.pkl"
     path = path0 if model_choice == "XGBoost" else path1 #if model_choice == "Random Forest" else path2 # Using your original paths
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
