@@ -94,8 +94,8 @@ def main():
     #<p>Powered by ModelArts, MindSpore, OBS, GaussDB, and CANN</p>
     st.markdown("""
                 <div class="header-container">
-            <h1> AI-Powered Insurance Risk Intelligence Platform</h1>
-            
+             <h1>Risk Assessment</h1>
+            <p>Client Risk Prediction System</p>
         </div>
         
     """, unsafe_allow_html=True)
