@@ -16,7 +16,7 @@ st.markdown("""
     /* Header styling with Huawei theme */
     .header-container {
         padding: 1rem;
-        background: linear-gradient(90deg, #CF0A2C 0%, #E2001A 100%);
+        background: linear-gradient(90deg, #CF0A2C 0%, #446ce3 100%);
         border-radius: 10px;
         color: white;
         text-align: center;
