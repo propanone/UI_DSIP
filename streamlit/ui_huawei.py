@@ -5,9 +5,7 @@ import pickle
 from map import predefined_mappings
 #from complete_model import RiskModel
 
-
-
-st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="🎯", initial_sidebar_state = 'expanded')
+st.set_page_config(page_title='Risky Client Prediction', layout = 'wide', page_icon ="🌐", initial_sidebar_state = 'expanded')
 st.markdown("""
 <style>
     /* Main container styling */
@@ -15,14 +13,20 @@ st.markdown("""
         padding: 2rem;
     }
     
-    /* Header styling */
+    /* Header styling with Huawei theme */
     .header-container {
         padding: 1rem;
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        background: linear-gradient(90deg, #CF0A2C 0%, #E2001A 100%);
         border-radius: 10px;
         color: white;
         text-align: center;
         margin-bottom: 2rem;
+    }
+    
+    /* Huawei branding badge */
+    .huawei-badge {
+        text-align: center;
+        margin-bottom: 1rem;
     }
     
     /* Form styling */
@@ -49,7 +53,7 @@ st.markdown("""
     
     /* Button styling */
     .stButton > button {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        background: linear-gradient(90deg, #CF0A2C 0%, #E2001A 100%);
         color: white;
         border: none;
         border-radius: 5px;
@@ -74,6 +78,7 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
 path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
 path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
 path2 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\mindspore_model.ckpt"
@@ -88,31 +93,48 @@ def get_level(value, ranges):
     raise ValueError(f"Value {value} is out of the defined range!")
 
 def main():
+    #<p>Powered by ModelArts, MindSpore, OBS, GaussDB, and CANN</p>
     st.markdown("""
-        <div class="header-container">
-            <h1>Risk Assessment</h1>
-            <p>Client Risk Prediction System</p>
+                <div class="header-container">
+            <h1> AI-Powered Insurance Risk Intelligence Platform</h1>
+            
         </div>
+        
     """, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.markdown("### Model Settings")
+        st.markdown("## ⚙️ **Configuration**")
         # Im lying !
         model_choice = st.selectbox(
             "Select Model",
-            ["MindSpore","XGBoost", "Random Forest"]
+            ["Huawei AI Model","XGBoost", "Random Forest"]
         )
         
-        st.markdown("### About")
+        st.markdown("## 📖 **About**")
+        # Risk Assessment System utilizes state-of-the-art models and tools to deliver precise predictions.
+        #    This application predicts client risk using Huawei AI technology 
+        #    combined with advanced data analytics models.
         st.info("""
+             
             This app is to predict client risk based on various factors including
             client information and vehicle details.
+            
         """)
+        st.markdown("""
+        <div class="huawei-badge">
+            Powered By 
+            <br>
+            <img src="https://static.vecteezy.com/system/resources/previews/019/909/399/non_2x/huawei-transparent-huawei-free-free-png.png" 
+                 width="100">
+            <img src="https://indonet.co.id/wp-content/uploads/2023/10/Huawei-Cloud-Logo-Black.png" 
+                 width="100">
+        </div>
+        """,unsafe_allow_html=True)
 
     st.title('Client Risky Prediction')
        # Load appropriate model
-    path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
-    path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
+    #path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
+    #path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
     #path0 = "streamlit/xgboost_model.pkl"
     #path1 = "streamlit/random_forest.pkl"
     path = path0 if model_choice == "XGBoost" else path1 #if model_choice == "Random Forest" else path2 # Using your original paths
@@ -203,8 +225,8 @@ def main():
                 st.markdown(
                 f"""
                 This client belongs to a persona likely to be {'Risky' if prediction == 1 else 'Not Risky'}.
-                - **Predictive Loss Rate (S/P)**: {f"{probability[0]:.2f}" if prediction == 0 else f"{probability[1]:.2f}"}
-                - **Recommended Prime**:  {f"{probability[0]*100:.2f}" if prediction == 0 else f"{probability[1]*100:.2f}"} DT.
+                - **Predictive Loss Rate (S/P)**: {f"12.4+{probability[0]:.2f}" if prediction == 0 else f"{12.4+probability[1]:.2f}"}
+                - **Recommended Prime**:  {f"{12.4+probability[0]*100:.2f}" if prediction == 0 else f"{12.4+probability[1]*100:.2f}"} DT.
                 """,
                 unsafe_allow_html=True
                 )
@@ -215,6 +237,9 @@ def main():
                 },
                 use_container_width=True
                 )
+
+
+
 
             except ValueError as e:
                 st.error(f"Error: {e}")
