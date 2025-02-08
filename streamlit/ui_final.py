@@ -111,10 +111,10 @@ def main():
 
     st.title('Client Risky Prediction')
        # Load appropriate model
-    path0 = "xgboost_model.pkl"
-    path1 = "random_forest.pkl"
-    #path0 = "streamlit/xgboost_model.pkl"
-    #path1 = "streamlit/random_forest.pkl"
+    #path0 = "xgboost_model.pkl"
+    #path1 = "random_forest.pkl"
+    path0 = "model_codes/models_out/xgboost_model.pkl"
+    path1 = "model_codes/models_out/random_forest.pkl"
     path = path0 if model_choice == "XGBoost" else path1 #if model_choice == "Random Forest" else path2 # Using your original paths
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
