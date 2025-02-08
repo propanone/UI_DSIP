@@ -1,9 +1,7 @@
-# For this to work change the path to the model line 41 , 42
 import streamlit as st
 import numpy as np
 import pickle
 from map import predefined_mappings
-#from complete_model import RiskModel
 
 
 
@@ -74,12 +72,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-#path0 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\xgboost_model.pkl"
-#path1 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\random_forest.pkl"
-#path2 = "C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\models_out\\mindspore_model.ckpt"
-#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\xgboost_model.pkl", "rb"))
-#model = pickle.load(open("C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\model_codes\\random_forest.pkl", "rb"))
-
 
 def get_level(value, ranges):
     for range_ in ranges:
@@ -111,18 +103,15 @@ def main():
 
     st.title('Client Risky Prediction')
        # Load appropriate model
-    #path0 = "xgboost_model.pkl"
-    #path1 = "random_forest.pkl"
     path0 = "model_codes/models_out/xgboost_model.pkl"
     path1 = "model_codes/models_out/random_forest.pkl"
-    path = path0 if model_choice == "XGBoost" else path1 #if model_choice == "Random Forest" else path2 # Using your original paths
+    path = path0 if model_choice == "XGBoost" else path1
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
 
     model = loaded_artifacts['model']
     label_encoders = loaded_artifacts['label_encoders']
     scaler = loaded_artifacts['scaler']
-
 # Main Form
     with st.form('prediction_form'):
         col1, col2 = st.columns(2)
