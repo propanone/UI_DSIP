@@ -1,24 +1,23 @@
-## requirements :
-```shell
-pip install steamlit
-pip install flask
+# How to run 
+
+Create your env (.venv) for example
+```
+python -m venv .venv
 ```
 
-## how to run the streamlit app :
-
-```python
-streamlit run app.py
+install the requirements
 ```
-or instead :
-```python
-python -m streamlit run app.py
+pip install -r requirement.txt
 ```
 
-### applier-ui :
-folder for Skeye-predict ui and backend files, Aborted, Not functional
+train the models (optional)
+```
+cd src/models/
+python randomforest.py
+python xgboost.py
+```
 
-### dat_files : 
-contains the dat files of that data and a script to transform them into a csv
-
-### model_codes :
-containts models code and output
+run the streamlit app 
+```
+streamlit run app_v1.py --server.port 80 --server.address 0.0.0.0
+```
