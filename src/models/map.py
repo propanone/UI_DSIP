@@ -1,15 +1,15 @@
 
 # Predefined mappings
 predefined_mappings = {
-    "usage": {
+    "USG": {
         "VP": 0, "u1": 1, "moto": 2, "taxi": 3, "U2": 4, "engin": 5, "autre": 6,
         "louage": 7, "transport_rural": 8, "taxi_collectif": 9
     },
-    "civilite": {
+    "CIV": {
         "Mr": 0, "Mme": 1, "Entreprise": 2, "mult_CT": 3, "Org": 4, "Couple": 5,
         "Etablissement": 6
     },
-    "activite": {
+    "ACT": {
         "EDUCATION_FORMATION": 0, "PROFESSIONS_MEDICALES": 1, "EMPLOYE": 2, "RETRAITE": 3,
         "ACTIVITES_COMMERCIALES": 4, "AGRICULTURE": 5, "RESIDENT_A_L'ETRANGER": 6, "ARTISAN": 7,
         "CORPS_ACTIFS": 8, "INGENIEUR": 9, "CHAUFFEUR": 10, "PARAMEDICAL": 11, "OUVRIER": 12,
@@ -24,7 +24,7 @@ predefined_mappings = {
          "0.0", "1.0", "2.0","3.0","4.0","5.0","6.0","7.0", "8.0",
         "9.0", "10.0", "11.0" 
     },
-    "age_objet_assuree": [
+    "AGO": [
         {"min": 0, "max": 1, "level": 1},
         {"min": 1, "max": 4, "level": 2},
         {"min": 4, "max": 9, "level": 3},
@@ -32,7 +32,7 @@ predefined_mappings = {
         {"min": 14, "max": 19, "level": 5},
         {"min": 19, "max": 90, "level": 6}
     ],
-    "age_client": [
+    "AGE": [
         {"min": 18, "max": 24, "level": 1},
         {"min": 24, "max": 29, "level": 2},
         {"min": 29, "max": 39, "level": 3},
@@ -85,7 +85,7 @@ predefined_mappings = {
         {"min": 10, "max": 999, "level": 5}
     ],
 
-    "marque": { "RENAULT": 0,"VOLKSWAGEN": 1,
+    "MRQ": { "RENAULT": 0,"VOLKSWAGEN": 1,
         "PEUGEOT": 2,
         "FIAT": 3,
         "CITROEN": 4,
@@ -186,7 +186,7 @@ predefined_mappings = {
         "GEELY": 99
     },
 
-    "delegation": {'Ariana Ville': 0,
+    "DLG": {'Ariana Ville': 0,
  'Sfax Ville': 1,
  'Monastir': 2,
  'El Menzah': 3,
@@ -446,7 +446,7 @@ predefined_mappings = {
  'Ghezala': 257,
  'El Faouar': 258,
  'El Ayoun': 259},
-    "carrosserie": {
+    "CRS": {
         "CI-4P": 0,
         "BREAK": 1,
         "CAMIONNETTE": 2,
@@ -470,7 +470,6 @@ predefined_mappings = {
         "BACHE": 20,
         "PR SREM": 21
     },
-    "energie": {"ES" : 0,"DI" : 1},
-    "sexe" : {"M":0, "F":1,"JP":2,"C":3},
+    "EN": {"ES" : 0,"DI" : 1},
+    "SX" : {"M":0, "F":1,"JP":2,"C":3},
 }
-#predefined_mappings["delegation_map"] = {delegation: idx for idx, delegation in enumerate(predefined_mappings["delegation"])}

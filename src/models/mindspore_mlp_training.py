@@ -1,4 +1,3 @@
-# Import required libraries
 import pandas as pd
 import numpy as np
 import mindspore as ms
@@ -36,6 +35,7 @@ ONNX_MODEL_PATH = 'models/mindspore_mlp.onnx'
 os.makedirs('models/pkl', exist_ok=True)
 
 # Define MLP network
+# Define MLP network with fixed predict method
 class MLPClassifier(nn.Cell):
     def __init__(self, input_dim, hidden_dim1=128, hidden_dim2=64, output_dim=2):
         super(MLPClassifier, self).__init__()
@@ -60,7 +60,9 @@ class MLPClassifier(nn.Cell):
     
     def predict(self, x):
         probs = self.predict_proba(x)
-        return ops.argmax(probs, axis=1)
+        # Fix: In MindSpore, the argmax operation needs the correct syntax
+        # Using the correct argmax in MindSpore ops
+        return ops.argmax(probs, dim=1)  # Change 'axis' to 'dim'
 
 # Define custom dataset
 def create_mindspore_dataset(features, labels, batch_size=32, shuffle=True):
@@ -95,6 +97,7 @@ def load_and_preprocess_data():
     return X, y, scaler
 
 # Main training function
+# Main training function with MindSpore-specific fixes
 def train_mindspore_model():
     # Load and preprocess data
     X, y, scaler = load_and_preprocess_data()
@@ -129,13 +132,16 @@ def train_mindspore_model():
     train_model = Model(model, loss_fn, optimizer, metrics={'accuracy'})
     
     # Define callbacks
+    # Make sure the directory exists
+    os.makedirs('./checkpoints', exist_ok=True)
+    
     config_ck = CheckpointConfig(save_checkpoint_steps=100, keep_checkpoint_max=5)
     ckpoint_cb = ModelCheckpoint(prefix="mlp_classifier", directory='./checkpoints', config=config_ck)
     loss_cb = LossMonitor()
     
-    # Train model
+    # Train model - using epoch_size instead of epochs
     print("Starting model training...")
-    train_model.train(epochs=50, train_dataset=train_dataset, callbacks=[ckpoint_cb, loss_cb])
+    train_model.train(50, train_dataset, callbacks=[ckpoint_cb, loss_cb])
     print("Model training completed!")
     
     # Evaluate model
@@ -169,6 +175,9 @@ def train_mindspore_model():
     print("\nConfusion Matrix:")
     print(cm)
     
+    # Ensure directory exists for model saving
+    os.makedirs('models/pkl', exist_ok=True)
+    
     # Save the model and preprocessors
     model_artifacts = {
         'model': model,
@@ -183,9 +192,12 @@ def train_mindspore_model():
     print(f"Model and preprocessors saved to {MODEL_SAVE_PATH}")
     
     # Export to ONNX for better compatibility
-    input_data = Tensor(np.ones((1, input_dim)).astype(np.float32))
-    export(model, input_data, file_name=ONNX_MODEL_PATH, file_format='ONNX')
-    print(f"Model exported to ONNX at {ONNX_MODEL_PATH}")
+    try:
+        input_data = Tensor(np.ones((1, input_dim)).astype(np.float32))
+        export(model, input_data, file_name=ONNX_MODEL_PATH, file_format='ONNX')
+        print(f"Model exported to ONNX at {ONNX_MODEL_PATH}")
+    except Exception as e:
+        print(f"Could not export to ONNX: {e}")
     
     return model, scaler
 
