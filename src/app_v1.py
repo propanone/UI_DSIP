@@ -102,8 +102,8 @@ def main():
 
     st.title('Client Risky Prediction')
        # Load appropriate model
-    path0 = os.path.join(os.getcwd(), 'xgboost_model.pkl')
-    path1 = os.path.join(os.getcwd(), 'random_forest.pkl')
+    path0 = 'xgboost_model.pkl'
+    path1 = 'random_forest.pkl'
     path = path0 if model_choice == "XGBoost" else path1
     with open(path, 'rb') as file:
         loaded_artifacts = pickle.load(file)
