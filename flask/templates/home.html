@@ -1,0 +1,71 @@
+{% extends "layout.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto py-16 px-4 text-center"> {# Increased py-12 to py-16 for more top/bottom space overall #}
+    <i data-lucide="shield-alert" class="mx-auto h-20 w-20 text-primary mb-6"></i>
+
+    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
+        Advanced AI for Car Insurance Risk Assessment
+    </h1>
+    <p class="mt-8 max-w-3xl mx-auto text-lg sm:text-xl leading-8 text-muted-foreground mb-12"> {# Increased mt-6 to mt-8 and added mb-12 #}
+        Welcome to insure AI. Leverage the power of artificial intelligence to
+        accurately assess car insurance risks, streamline underwriting, and make data-driven decisions.
+    </p>
+    <!---
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-x-8"> {# Increased mt-12 to mt-10 (adjust as needed after para mb), increased gap #}
+        <a href="{{ url_for('car_assessment_route') }}"
+           class="btn btn-lg w-full sm:w-auto text-base bg-green-600 hover:bg-green-700 text-white dark:bg-green-500 dark:hover:bg-green-600 dark:text-gray-900 px-8 py-3 rounded-md">
+           {# Replaced btn-primary with specific green classes #}
+           {# Added px-8 py-3 for a slightly larger button, and rounded-md #}
+           <i data-lucide="car" class="mr-2 h-5 w-5"></i>
+            Assess Car Risk Now
+        </a>
+        <a href="#platform-features"
+           class="btn btn-outline btn-lg w-full sm:w-auto text-base border-primary/50 hover:border-primary hover:bg-primary/5 text-primary px-8 py-3 rounded-md">
+           {# Adjusted outline button to use primary color for consistency if theme is changed #}
+           {# Added px-8 py-3 for a slightly larger button, and rounded-md #}
+           Learn More <i data-lucide="arrow-down-circle" class="ml-2 h-5 w-5"></i>
+        </a>
+    </div> -->
+
+    <div id="platform-features" class="mt-24 pt-20 border-t border-border/40"> {# Increased mt-20 to mt-24 and pt-16 to pt-20 #}
+        <h2 class="text-3xl font-semibold tracking-tight text-foreground mb-12">Platform Key Features</h2> {# Increased mb-10 to mb-12 #}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 text-left">
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="brain-circuit" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Sophisticated AI Engine</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Utilizes robust machine learning model, trained on extensive datasets, for high-accuracy risk predictions in the insurance sector.
+                </p>
+            </div>
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                 <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="zap" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Rapid & Efficient</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Get near real-time insights into client risk profiles for car insurance, significantly expediting your decision-making and operational efficiency.
+                </p>
+            </div>
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                 <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="file-text" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Clear & Actionable Insights</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Receive clear risk predictions, probability scores, and concise summaries from our integrated LLM, aiding in comprehensive understanding for car insurance underwriting.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

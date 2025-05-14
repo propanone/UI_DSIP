@@ -1,0 +1,73 @@
+2025-05-13 17:52:28,270 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:52:29,399 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:30,282 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:33,733 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:37,426 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:39,669 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:44,243 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:47,712 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:53:56,283 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:54:33,086 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:54:34,824 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:58:34,254 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 17:58:35,878 INFO: RiskNet AI Car Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:29]
+2025-05-13 18:12:11,423 WARNING: Form validation failed: {'age_client': ['This field is required.'], 'charge_utile': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:114]
+2025-05-13 18:12:26,226 WARNING: Form validation failed: {'charge_utile': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:114]
+2025-05-13 18:13:17,217 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Moknine', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 4, 'age_objet_assuree': 3, 'puissance': 5, 'place': 3, 'charge_utile': 1.0, 'valeur_venale': 2000, 'valeur_neuve': 7000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCN9eg.flaAKV6CAXOOTFIOOzSgEcjYrlg'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:48]
+2025-05-13 18:13:17,225 ERROR: FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models\scaler.pkl. Ensure it's trained and path is correct in config. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:106]
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\data_processing.py", line 14, in preprocess_form_data
+    with open(scaler_path, 'rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\flask\\models\\scaler.pkl'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py", line 57, in car_assessment_route
+    processed_features_np, raw_input_dict_for_display = preprocess_form_data(
+                                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\data_processing.py", line 17, in preprocess_form_data
+    raise FileNotFoundError(f"Scaler file not found at {scaler_path}. Ensure it's trained and path is correct in config.")
+FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models\scaler.pkl. Ensure it's trained and path is correct in config.
+2025-05-13 18:13:23,153 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Moknine', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 4, 'age_objet_assuree': 3, 'puissance': 5, 'place': 3, 'charge_utile': 1.0, 'valeur_venale': 2000, 'valeur_neuve': 7000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCN9rQ.rWpn3Or0i0avvw4A5Ne1SuT3oIc'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:48]
+2025-05-13 18:13:23,153 ERROR: FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models\scaler.pkl. Ensure it's trained and path is correct in config. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:106]
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\data_processing.py", line 14, in preprocess_form_data
+    with open(scaler_path, 'rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\flask\\models\\scaler.pkl'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py", line 57, in car_assessment_route
+    processed_features_np, raw_input_dict_for_display = preprocess_form_data(
+                                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\data_processing.py", line 17, in preprocess_form_data
+    raise FileNotFoundError(f"Scaler file not found at {scaler_path}. Ensure it's trained and path is correct in config.")
+FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models\scaler.pkl. Ensure it's trained and path is correct in config.
+2025-05-13 19:44:58,360 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-13 19:45:02,750 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-13 19:45:37,315 WARNING: Form validation failed: {'charge_utile': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:145]
+2025-05-13 19:45:42,381 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Ariana Ville', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 5, 'age_objet_assuree': 3, 'puissance': 7, 'place': 5, 'charge_utile': 0.5, 'valeur_venale': 35000, 'valeur_neuve': 7000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCOTUQ.iuwFiMDLvmzuJ9Y4SNEpZB5J2ZI'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:79]
+2025-05-13 19:45:42,389 INFO: Processed features shape: (1, 17) [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:89]
+2025-05-13 19:45:42,405 INFO: Prediction: 0, Probability: [0.98825777 0.01174223] [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:95]
+2025-05-13 19:45:42,405 INFO: Gemini API configured successfully with model 'gemini-1.5-flash-latest'. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:20]
+2025-05-13 19:45:42,413 INFO: Sending prompt to Gemini: 
+    Analyze the following car insurance risk assessment and provide a concise, helpful summary for an underwriter.
+    The client has been predicted as **Not Risky**.
+    The confidence in this predi... [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:74]
+2025-05-13 19:45:50,899 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-13 19:45:50,967 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Ariana Ville', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 5, 'age_objet_assuree': 3, 'puissance': 7, 'place': 5, 'charge_utile': 0.5, 'valeur_venale': 35000, 'valeur_neuve': 7000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCOTUQ.iuwFiMDLvmzuJ9Y4SNEpZB5J2ZI'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:79]
+2025-05-13 19:45:50,975 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Ariana Ville', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 5, 'age_objet_assuree': 3, 'puissance': 7, 'place': 5, 'charge_utile': 0.5, 'valeur_venale': 35000, 'valeur_neuve': 7000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCOTUQ.iuwFiMDLvmzuJ9Y4SNEpZB5J2ZI'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:79]
+2025-05-13 19:45:50,984 INFO: Processed features shape: (1, 17) [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:89]
+2025-05-13 19:45:50,992 INFO: Processed features shape: (1, 17) [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:89]
+2025-05-13 19:45:51,000 INFO: Prediction: 0, Probability: [0.98825777 0.01174223] [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:95]
+2025-05-13 19:45:51,000 INFO: Prediction: 0, Probability: [0.98825777 0.01174223] [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:95]
+2025-05-13 19:45:51,000 INFO: Gemini API configured successfully with model 'gemini-1.5-flash-latest'. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:20]
+2025-05-13 19:45:51,000 INFO: Sending prompt to Gemini: 
+    Analyze the following car insurance risk assessment and provide a concise, helpful summary for an underwriter.
+    The client has been predicted as **Not Risky**.
+    The confidence in this predi... [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:74]
+2025-05-13 23:47:27,441 INFO: Processed features shape: (1, 17) [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:89]

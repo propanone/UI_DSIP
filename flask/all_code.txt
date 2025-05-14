@@ -1,0 +1,1807 @@
+from flask import Flask, render_template, request, flash, redirect, url_for, current_app
+from config import Config
+from forms import CarInsuranceAssessmentForm
+from utils.mappings import predefined_mappings as form_select_mappings # For form choices
+from services.data_processing import preprocess_form_data
+from services.prediction_service import get_model_prediction
+from services.llm_service import get_pangu_llm_summary_mock # This now calls Gemini
+# Removed configure_gemini import from here, it's called from run.py or llm_service
+import os
+import pickle
+import numpy as np
+from datetime import datetime
+import logging
+from logging.handlers import RotatingFileHandler
+
+app = Flask(__name__)
+app.config.from_object(Config)
+
+# --- Load Model Artifacts ONCE ---
+SELECTED_MODEL_ARTIFACT_PATH = app.config["XGBOOST_MODEL_ARTIFACT_PATH"] # Or RF path
+
+MODEL_ARTIFACTS = None
+LOADED_MODEL = None
+LOADED_SCALER = None
+LOADED_IMPUTER = None
+FEATURE_ORDER = None
+
+try:
+    with open(SELECTED_MODEL_ARTIFACT_PATH, 'rb') as f:
+        MODEL_ARTIFACTS = pickle.load(f)
+    # app.logger is not available yet, use print for initial loading feedback
+    print(f"INFO: Successfully loaded model artifacts from {SELECTED_MODEL_ARTIFACT_PATH}")
+    LOADED_MODEL = MODEL_ARTIFACTS['model']
+    LOADED_SCALER = MODEL_ARTIFACTS['scaler']
+    LOADED_IMPUTER = MODEL_ARTIFACTS['imputer']
+    FEATURE_ORDER = MODEL_ARTIFACTS['feature_order']
+except FileNotFoundError:
+    print(f"ERROR: FATAL: Model artifact not found at {SELECTED_MODEL_ARTIFACT_PATH}. App may not function correctly.")
+    MODEL_ARTIFACTS = None
+except Exception as e:
+    print(f"ERROR: FATAL: Error loading model artifacts from {SELECTED_MODEL_ARTIFACT_PATH}: {e}")
+    MODEL_ARTIFACTS = None
+
+# Setup logging after app object is created
+if not app.debug: # Production logging
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    file_handler = RotatingFileHandler('logs/risknet_app.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+
+if MODEL_ARTIFACTS:
+    app.logger.info('RiskNet AI Car Insurance App startup - ML Model Loaded')
+else:
+    app.logger.error('RiskNet AI Car Insurance App startup - FAILED TO LOAD ML MODEL ARTIFACTS')
+
+
+@app.context_processor
+def inject_now():
+    return {'now': datetime.utcnow()}
+
+@app.route('/')
+def home_route():
+    return render_template('home.html', title="Welcome to RiskNet AI")
+
+@app.route('/car-assessment', methods=['GET', 'POST'])
+def car_assessment_route():
+    if not MODEL_ARTIFACTS:
+        flash("Critical Error: The prediction model is not loaded. Please contact support.", "danger")
+        # form_select_mappings should be globally available now
+        return render_template('car_assessment_form.html', form=CarInsuranceAssessmentForm(form_select_mappings), title="Car Insurance Client Risk Assessment - System Error")
+
+    form = CarInsuranceAssessmentForm(form_select_mappings)
+
+    if form.validate_on_submit():
+        app.logger.info(f"Form submitted with data: {form.data}")
+        try:
+            form_data_for_processing = form.data.copy()
+            form_data_for_processing.pop('csrf_token', None)
+            form_data_for_processing.pop('submit', None)
+
+            processed_features_np, raw_input_dict_for_display = preprocess_form_data(
+                form_data_for_processing,
+                MODEL_ARTIFACTS
+            )
+            app.logger.info(f"Processed features shape: {processed_features_np.shape}")
+
+            prediction_val, probability_val = get_model_prediction(
+                processed_features_np,
+                LOADED_MODEL
+            )
+            app.logger.info(f"Prediction: {prediction_val}, Probability: {probability_val}")
+
+            llm_input_data = {
+                "model_prediction": "Risky" if prediction_val == 1 else "Not Risky",
+                "confidence": float(probability_val[1] if prediction_val == 1 else probability_val[0]),
+                "client_age": form.age_client.data,
+                "vehicle_age": form.age_objet_assuree.data,
+                "horsepower": form.puissance.data,
+                 # Pass display versions of some categorical data for richer LLM prompt
+                "vehicle_usage_display": raw_input_dict_for_display.get('usage'),
+                "client_activity_display": raw_input_dict_for_display.get('activite'),
+                "vehicle_brand_display": raw_input_dict_for_display.get('marque')
+            }
+            llm_summary = get_pangu_llm_summary_mock(llm_input_data) # Calls Gemini
+            app.logger.info(f"LLM Summary: {llm_summary}")
+
+            if not isinstance(probability_val, np.ndarray):
+                 probability_val = np.array(probability_val)
+
+            if prediction_val == 0:
+                s_p_value = 12.4 + probability_val[0]
+                recommended_premium = 12.4 + probability_val[0] * 100
+            else:
+                s_p_value = 12.4 + probability_val[1]
+                recommended_premium = 12.4 + probability_val[1] * 100
+
+            return render_template('car_assessment_results.html',
+                                   form_data_display=raw_input_dict_for_display,
+                                   prediction=int(prediction_val),
+                                   probability=probability_val.tolist(),
+                                   model_used=SELECTED_MODEL_ARTIFACT_PATH.split(os.sep)[-1].replace('_risk_model.pkl','').replace('_',' ').title(),
+                                   llm_summary=llm_summary,
+                                   s_p_value=s_p_value,
+                                   recommended_premium=recommended_premium,
+                                   title_prefix="Car Assessment Results",
+                                   form=form)
+
+        except ValueError as ve:
+            flash(f"Error processing input: {str(ve)}", "danger")
+            app.logger.error(f"ValueError during processing: {ve}", exc_info=True)
+        except FileNotFoundError as fe: # Should be caught at startup for model artifact
+            flash(f"A required model or data file was not found: {str(fe)}. Please contact support.", "danger")
+            app.logger.error(f"FileNotFoundError: {fe}", exc_info=True)
+        except Exception as e:
+            flash(f"An unexpected error occurred during risk assessment. Details: {str(e)}", "danger")
+            app.logger.error(f"General Exception: {e}", exc_info=True)
+
+        return render_template('car_assessment_form.html', form=form, title="Car Insurance Client Risk Assessment")
+
+    elif request.method == 'POST':
+        app.logger.warning(f"Form validation failed: {form.errors}")
+        flash("Please correct the errors below and resubmit.", "warning")
+
+    return render_template('car_assessment_form.html', form=form, title="Car Insurance Client Risk Assessment")
+
+# Removed other insurance type routes# config.py
+import os
+from dotenv import load_dotenv
+
+basedir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(basedir, '.env')) # This loads your .env file
+
+class Config:
+    SECRET_KEY = os.environ.get('APP_SECRET_KEY') or 'a_very_secret_risknet_ai_key'
+    DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    PORT = int(os.environ.get('APP_PORT', 5003))
+
+    BASE_MODEL_DIR = os.path.join(basedir, "models", "pkl")
+    XGBOOST_MODEL_ARTIFACT_PATH = os.path.join(BASE_MODEL_DIR, "xgboost_risk_model.pkl")
+    RF_MODEL_ARTIFACT_PATH = os.path.join(BASE_MODEL_DIR, "random_forest_risk_model.pkl")
+
+    # Gemini API Key
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Reads from .env
+
+    # PANGU variables can be removed or repurposed if only using Gemini
+    # PANGU_API_ENDPOINT = os.environ.get("LLM_API_ENDPOINT", "YOUR_LLM_ENDPOINT_HERE")
+    # PANGU_APP_CODE = os.environ.get("LLM_APP_CODE", "YOUR_LLM_APP_CODE_HERE")
+
+    @staticmethod
+    def init_app(app):
+        pass# forms.py
+from flask_wtf import FlaskForm
+from wtforms import StringField, SelectField, SubmitField, IntegerField, FloatField
+from wtforms.validators import DataRequired, NumberRange
+
+class CarInsuranceAssessmentForm(FlaskForm):
+    # Client Info
+    # These names should align with the keys in form_data_dict in data_processing.py
+    # and ultimately with the column names used in training if they are categorical
+    sexe = SelectField('Gender (SX)', validators=[DataRequired()]) # Maps to SX
+    age_client = IntegerField('Client Age (AGE)', validators=[DataRequired(), NumberRange(min=18, message="Client age must be 18 or over.")]) # Maps to AGE
+    civilite = SelectField('Civil Status (CIV)', validators=[DataRequired()]) # Maps to CIV
+    delegation = SelectField('Main Residence (Delegation) (DLG)', validators=[DataRequired()]) # Maps to DLG
+    activite = SelectField('Client Activity / Profession (ACT)', validators=[DataRequired()]) # Maps to ACT
+
+    # Vehicle Info
+    marque = SelectField('Vehicle Brand (MRQ)', validators=[DataRequired()]) # Maps to MRQ
+    carrosserie = SelectField('Vehicle Body Type (CRS)', validators=[DataRequired()]) # Maps to CRS
+    usage = SelectField('Vehicle Usage Type (USG)', validators=[DataRequired()]) # Maps to USG
+    # 'classe' in your form seems to be 'CLS' in training (numeric)
+    classe = SelectField('Risk Class Assignment (CLS)', validators=[DataRequired()]) # Maps to CLS
+    energie = SelectField('Fuel Type (EN)', validators=[DataRequired()]) # Maps to EN
+
+    # Technical Details that map to NUMERIC_FEATURES in training
+    # Ensure these names match the keys expected by data_processing.py
+    anciennete = IntegerField('Client Seniority (Years with Insurer) (ANC)', validators=[DataRequired(), NumberRange(min=0)]) # Maps to ANC
+    age_objet_assuree = IntegerField('Vehicle Age (Years) (AGO)', validators=[DataRequired(), NumberRange(min=0, max=90)]) # Maps to AGO
+    puissance = IntegerField('Vehicle Horsepower (Fiscal) (PSS)', validators=[DataRequired(), NumberRange(min=0)]) # Maps to PSS
+    place = IntegerField('Number of Seats in Vehicle (PLA)', validators=[DataRequired(), NumberRange(min=1)]) # Maps to PLA
+    charge_utile = FloatField('Payload Capacity (Tons, if applicable) (CU)', validators=[DataRequired(), NumberRange(min=0.0)]) # Maps to CU
+
+    # Financial Info that map to NUMERIC_FEATURES
+    # These are not explicitly in your NUMERIC_FEATURES list in the training script (VV, VN)
+    # but your training map.py has "valeur_ranges".
+    # Let's assume valeur_venale -> VV and valeur_neuve -> VN
+    # If these are not used by the model, they can be removed or just used for display.
+    # If they ARE used, they need to be added to NUMERIC_FEATURES in training and here.
+    # For now, I'll assume they are needed as VV and VN.
+    valeur_venale = IntegerField('Vehicle Current Market Value (DT) (VV)', validators=[DataRequired(), NumberRange(min=0)])
+    valeur_neuve = IntegerField('Vehicle Original Price (DT) (VN)', validators=[DataRequired(), NumberRange(min=0)])
+
+    submit = SubmitField('Assess Car Insurance Risk')
+
+    def __init__(self, mappings_dict_for_form_choices, *args, **kwargs):
+        super(CarInsuranceAssessmentForm, self).__init__(*args, **kwargs)
+        # Populate choices dynamically using the provided mappings
+        # These keys MUST match the CATEGORICAL_FEATURES names from training script (or their mapping key in map.py)
+        self.sexe.choices = [(k, k) for k in mappings_dict_for_form_choices["sx"].keys()] # "sexe" in form, "sx" in map.py
+        self.civilite.choices = [(k, k) for k in mappings_dict_for_form_choices["civ"].keys()] # "civilite" in form, "civ" in map.py
+        self.delegation.choices = [(k, k) for k in mappings_dict_for_form_choices["dlg"].keys()] # "delegation" in form, "dlg" in map.py
+        self.activite.choices = [(k, k) for k in mappings_dict_for_form_choices["act"].keys()] # "activite" in form, "act" in map.py
+        self.marque.choices = [(k, k) for k in mappings_dict_for_form_choices["mrq"].keys()] # "marque" in form, "mrq" in map.py
+        self.carrosserie.choices = [(k, k) for k in mappings_dict_for_form_choices["crs"].keys()] # "carrosserie" in form, "crs" in map.py
+        self.usage.choices = [(k, k) for k in mappings_dict_for_form_choices["usg"].keys()] # "usage" in form, "usg" in map.py
+        self.energie.choices = [(k, k) for k in mappings_dict_for_form_choices["en"].keys()] # "energie" in form, "en" in map.py
+
+        # For 'classe' (CLS), if it's numeric like in training, the choices should be the numbers themselves.
+        # Assuming 'classe' in mappings_dict_for_form_choices is a list/set of numeric-like strings
+        # e.g., {"0.0", "1.0", ...}
+        # The training script's `map.py` has this under "classe" key.
+        classe_values = mappings_dict_for_form_choices.get("classe", {"0.0", "1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0", "8.0", "9.0", "10.0", "11.0"})
+        self.classe.choices = sorted([(str(val), str(val)) for val in classe_values], key=lambda x: float(x[0]))# map.py (Save this as map.py in the same directory)
+
+predefined_mappings = {
+    "usage": {"VP": 0, "u1": 1, "moto": 2, "taxi": 3, "U2": 4, "engin": 5, "autre": 6, "louage": 7, "transport_rural": 8, "taxi_collectif": 9},
+    "civilite": {"Mr": 0, "Mme": 1, "Entreprise": 2, "mult_CT": 3, "Org": 4, "Couple": 5, "Etablissement": 6},
+    "activite": {"EDUCATION_FORMATION": 0, "PROFESSIONS_MEDICALES": 1, "EMPLOYE": 2, "RETRAITE": 3, "ACTIVITES_COMMERCIALES": 4, "AGRICULTURE": 5, "RESIDENT_A_L'ETRANGER": 6, "ARTISAN": 7, "CORPS_ACTIFS": 8, "INGENIEUR": 9, "CHAUFFEUR": 10, "PARAMEDICAL": 11, "OUVRIER": 12, "TAXI_LOUAGE_TRASPORT_RURAL": 13, "ARCHITECTURE_BTP_IMMOBILIER": 14, "TECHNICIEN": 15, "GERANT_DIRIGEANT": 16, "PROFESSIONNEL_CONSULTANT_EXPERT": 17, "METIERS_LEGAUX": 18, "INFORMATIQUE": 19, "DIRECTEUR": 20, "TOURISME": 21, "AUTO_ECOLE": 22, "ACTIVITES_SPORTIVES": 23, "ACTIVITES_ARTISTIQUES": 24, "TRANSPORT_AEREEN": 25, "ETAT": 26, "TRANSPORT": 27, "ACTIVITES_FINACIAIRES_ET_BANCAIRES": 28, "JOURNALISME": 29, "DIPLOMATIE": 30, "ASSOCIATIONS_ONG": 31, "SANS_PROFESSION": 32, "ACTIVITES_INDUSTRIELLES": 33},
+    # CLS is treated as numeric, no mapping dict needed here.
+    "marque": {"RENAULT": 0,"VOLKSWAGEN": 1,"PEUGEOT": 2,"FIAT": 3,"CITROEN": 4,"KIA": 5,"FORD": 6,"OPEL": 7,"ISUZU": 8,"MERCEDES-BENZ": 9,"TOYOTA": 10,"HYUNDAI": 11,"NISSAN": 12,"SEAT": 13,"B.M.W.": 14,"CHEVROLET": 15,"AUDI": 16,"MITSUBISHI": 17,"DACIA": 18,"SUZUKI": 19,"MAZDA": 20,"IVECO": 21,"CHERY": 22,"MAHINDRA": 23,"SSANGYONG": 24,"SKODA": 25,"GREATWALL": 26,"MBK": 27,"CHRYSLER": 28,"PIAGGIO": 29,"MINI": 30,"JEEP": 31,"VOLVO": 32,"YAMAHA": 33,"JAGUAR_LAND_ROVER": 34,"HONDA": 35,"TATA": 36,"PO": 37,"ALFA_ROMEO": 38,"MG": 39,"UNISCOOT": 40,"DAEWOO": 41,"JIALING": 42,"LANCIA": 43,"DAIMLER": 44,"BERLIET": 45,"SCANIA": 46,"DONG_FENG_": 47,"DFSK": 48,"ROVER": 49,"APRILIA": 50,"TUNICOM": 51,"COMET": 52,"LANDINI": 53,"WALLYSCAR": 54,"ZIMOTA": 55,"MALAGUTI": 56,"MAN": 57,"SMART": 58,"DAIHATSU": 59,"JEDAA": 60,"MISTRAL": 61,"AVIA": 62,"MASSEY_FERGUSON": 63,"PORSCHE": 64,"FTM": 65,"CATERPILLAR": 66,"FOTON": 67,"KYMCO": 68,"BAIC": 69,"DEUTZ": 70,"KUBOTA": 71,"DAF": 72,"HUARD-TUNISIE": 73,"VESPA": 74,"GILERA": 75,"COMECAB": 76,"SAME_DEUTZ_FAHR": 77,"SAMSUNG": 78,"HIDROMEK": 79,"KINGLONG": 80,"AUTOBIANCHI": 81,"DS": 82,"BENTLEY": 83,"MASERATI": 84,"AIMA": 85,"INFINITI": 86,"BENZHOU": 87,"BOBCAT": 88,"DOOSAN": 89,"SIMATRA": 90,"SYM": 91,"CASE": 92,"BAOLI": 93,"DODGE": 94,"HAVAL": 95,"MAGIRUS": 96,"LADA": 97,"LAMBORGHINI": 98,"GEELY": 99}, # Map MRQ
+    "delegation": {'Ariana Ville': 0,'Sfax Ville': 1,'Monastir': 2,'El Menzah': 3,'Le Bardo': 4,'Mannouba': 5,'El Mourouj': 6,'Hammamet': 7,'Sousse Ville': 8,'Sakiet Ezzit': 9,'Sousse Jaouhara': 10,'La Marsa': 11,'La Soukra': 12,'Nabeul': 13,'Ben Arous': 14,'Msaken': 15,'Raoued': 16,'Sousse Riadh': 17,'Kairouan Sud': 18,'Moknine': 19,'Bizerte Nord': 20,'Sakiet Eddaier': 21,'Rades': 22,'El Omrane Superieur': 23,'Ezzahra': 24,'Hammam Sousse': 25,'Le Kef Est': 26,'Nouvelle Medina': 27,'Sfax Sud': 28,'El Kabbaria': 29,'Megrine': 30,'Bou Mhel El Bassatine': 31,'Hammam Lif': 32,'Mahdia': 33,'El Ouerdia': 34,'La Goulette': 35,'Gafsa Sud': 36,'Jendouba Nord': 37,'Ksibet El Mediouni': 38,'Beja Nord': 39,'Carthage': 40,'Houmet Essouk': 41,'Korba': 42,'Fouchana': 43,'Hammam Chatt': 44,'Bab Bhar': 45,'Kalaa El Kebira': 46,'Zarzis': 47,'Ettahrir': 48,'Ksar Helal': 49,'Ezzouhour (Tunis)': 50,'Siliana Sud': 51,'Kalaa Essghira': 52,'Kelibia': 53,'Oued Ellil': 54,'Akouda': 55,'Dar Chaabane Elfehri': 56,'Kasserine Nord': 57,'El Hrairia': 58,'Gabes Medina': 59,'Mornag': 60,'Mnihla': 61,'Sayada Lamta Bou Hajar': 62,'Midoun': 63,'Sidi El Bechir': 64,'Cite El Khadra': 65,'Grombalia': 66,'Mohamadia': 67,'Zaghouan': 68,'Sfax Est': 69,'Beni Khiar': 70,'Sidi Hassine': 71,'Ettadhamen': 72,'La Medina': 73,'Teboulba': 74,'Feriana': 75,'Soliman': 76,'Jemmal': 77,'La Chebba': 78,'Mejez El Bab': 79,'Sidi Bouzid Ouest': 80,'Sahline': 81,'Bembla': 82,'El Kram': 83,'Gabes Sud': 84,'Menzel Bourguiba': 85,'Menzel Temime': 86,'Medenine Sud': 87,'El Omrane': 88,'Bou Merdes': 89,'El Ksar': 90,'Ras Jebel': 91,'Ajim': 92,'Mornaguia': 93,'Le Kef Ouest': 94,'Tozeur': 95,'Beni Khalled': 96,'Kebili Sud': 97,'Douar Hicher': 98,'Menzel Jemil': 99,'Testour': 100,'Ghardimaou': 101,'Tajerouine': 102,'Enfidha': 103,'Gabes Ouest': 104,'Essijoumi': 105,'Ksour Essaf': 106,'Douz': 107,'Menzel Bouzelfa': 108,'Tataouine Sud': 109,'Ouerdanine': 110,'Jedaida': 111,'Souassi': 112,'El Hamma': 113,'El Jem': 114,'Bou Argoub': 115,'Zeramdine': 116,'Tinja': 117,'Jebel Jelloud': 118,'Sidi Thabet': 119,'Dahmani': 120,'Mahras': 121,'Bekalta': 122,'Jebeniana': 123,'Kairouan Nord': 124,'Makthar': 125,'Ouled Chamakh': 126,'Agareb': 127,'Bou Salem': 128,'Gaafour': 129,'Bir Ali Ben Khelifa': 130,'Jarzouna': 131,'El Haouaria': 132,'Sakiet Sidi Youssef': 133,'Bou Hajla': 134,'Teboursouk': 135,'Ben Guerdane': 136,'El Guettar': 137,'Ain Draham': 138,'Sned': 139,'Chorbane': 140,'Le Sers': 141,'Ezzouhour (Kasserine)': 142,'El Amra': 143,'Nebeur': 144,'Hammam El Ghezaz': 145,'Sbikha': 146,'Bou Ficha': 147,'Fernana': 148,'Beni Hassen': 149,'El Ksour': 150,'Foussana': 151,'El Hencha': 152,'Sidi Bou Ali': 153,'Degueche': 154,'Kalaat Sinane': 155,'Sidi Alouene': 156,'Hammam Zriba': 157,'Kerkenah': 158,'Metlaoui': 159,'Oueslatia': 160,'Borj El Amri': 161,'Bou Arada': 162,'Tebourba': 163,'Bizerte Sud': 164,'El Mida': 165,'Hergla': 166,'Thala': 167,'El Mdhilla': 168,'Sbeitla': 169,'Tabarka': 170,'Nasrallah': 171,'El Fahs': 172,'Bir Mcherga': 173,'Souk El Ahad': 174,'Jendouba': 175,'Cherarda': 176,'Mareth': 177,'Mateur': 178,'Hajeb El Ayoun': 179,'Le Krib': 180,'Ennadhour': 181,'Moulares': 182,'Nefza': 183,'Mejel Bel Abbes': 184,'El Metouia': 185,'Haffouz': 186,'Oued Mliz': 187,'Chebika': 188,'Ghar El Melh': 189,'Bab Souika': 190,'El Alia': 191,'El Ala': 192,'Tataouine Nord': 193,'Menzel Chaker': 194,'Kalaat Landlous': 195,'Esskhira': 196,'Rohia': 197,'Regueb': 198,'Bargou': 199,'Sidi El Heni': 200,'Redeyef': 201,'Kesra': 202,'Hassi El Frid': 203,'Sidi Aich': 204,'Nefta': 205,'Beni Khedache': 206,'Jerissa': 207,'Nouvelle Matmata': 208,'Kebili Nord': 209,'Ghomrassen': 210,'Melloulech': 211,'Utique': 212,'Kalaa El Khasba': 213,'El Battan': 214,'Thibar': 215,'Maknassy': 216,'Amdoun': 217,'Takelsa': 218,'Ghannouche': 219,'Sidi Bouzid Est': 220,'Goubellat': 221,'El Aroussa': 222,'Saouef': 223,'Sidi Bou Rouis': 224,'Sejnane': 225,'Kasserine Sud': 226,'Smar': 227,'Bir El Haffey': 228,'Ouled Haffouz': 229,'Ben Oun': 230,'Kondar': 231,'Mezzouna': 232,'Jilma': 233,'Sbiba': 234,'Ghraiba': 235,'Bir Lahmar': 236,'Beja Sud': 237,'Joumine': 238,'Dhehiba': 239,'Haidra': 240,'Hbira': 241,'Menzel Bouzaiene': 242,'Gafsa Nord': 243,'Belkhir': 244,'Cebbala': 245,'Sidi Makhlouf': 246,'Jediliane': 247,'Touiref': 248,'Balta Bou Aouene': 249,'Menzel Habib': 250,'Matmata': 251,'Souk Jedid': 252,'Tameghza': 253,'Remada': 254,'Medenine Nord': 255,'Hezoua': 256,'Ghezala': 257,'El Faouar': 258,'El Ayoun': 259}, # Map DLG
+    "carrosserie": {"CI-4P": 0,"BREAK": 1,"CAMIONNETTE": 2,"CI-2P": 3,"CABRIOLET": 4,"CI-5P": 5,"PLATEAU": 6,"FOURGON": 7,"MIXTE": 8,"SOLO": 9,"CI-3P": 10,"BENNE": 11,"CAMION": 12,"ENGIN": 13,"mult_CAROSSERIE": 14,"BUS": 15,"PR REM": 16,"ENGIN_AGRICOLE": 17,"REMORQUAGE": 18,"BD": 19,"BACHE": 20,"PR SREM": 21}, # Map CRS
+    "energie": {"ES" : 0,"DI" : 1}, # Map EN
+    "sexe" : {"M":0, "F":1,"JP":2,"C":3}, # Map SX
+
+    # Adding lowercase keys for robustness if needed, assuming keys in map.py match exactly for now
+    "usg": {"VP": 0, "u1": 1, "moto": 2, "taxi": 3, "U2": 4, "engin": 5, "autre": 6, "louage": 7, "transport_rural": 8, "taxi_collectif": 9},
+    "civ": {"Mr": 0, "Mme": 1, "Entreprise": 2, "mult_CT": 3, "Org": 4, "Couple": 5, "Etablissement": 6},
+    "act": {"EDUCATION_FORMATION": 0, "PROFESSIONS_MEDICALES": 1, "EMPLOYE": 2, "RETRAITE": 3, "ACTIVITES_COMMERCIALES": 4, "AGRICULTURE": 5, "RESIDENT_A_L'ETRANGER": 6, "ARTISAN": 7, "CORPS_ACTIFS": 8, "INGENIEUR": 9, "CHAUFFEUR": 10, "PARAMEDICAL": 11, "OUVRIER": 12, "TAXI_LOUAGE_TRASPORT_RURAL": 13, "ARCHITECTURE_BTP_IMMOBILIER": 14, "TECHNICIEN": 15, "GERANT_DIRIGEANT": 16, "PROFESSIONNEL_CONSULTANT_EXPERT": 17, "METIERS_LEGAUX": 18, "INFORMATIQUE": 19, "DIRECTEUR": 20, "TOURISME": 21, "AUTO_ECOLE": 22, "ACTIVITES_SPORTIVES": 23, "ACTIVITES_ARTISTIQUES": 24, "TRANSPORT_AEREEN": 25, "ETAT": 26, "TRANSPORT": 27, "ACTIVITES_FINACIAIRES_ET_BANCAIRES": 28, "JOURNALISME": 29, "DIPLOMATIE": 30, "ASSOCIATIONS_ONG": 31, "SANS_PROFESSION": 32, "ACTIVITES_INDUSTRIELLES": 33},
+    "mrq": {"RENAULT": 0,"VOLKSWAGEN": 1,"PEUGEOT": 2,"FIAT": 3,"CITROEN": 4,"KIA": 5,"FORD": 6,"OPEL": 7,"ISUZU": 8,"MERCEDES-BENZ": 9,"TOYOTA": 10,"HYUNDAI": 11,"NISSAN": 12,"SEAT": 13,"B.M.W.": 14,"CHEVROLET": 15,"AUDI": 16,"MITSUBISHI": 17,"DACIA": 18,"SUZUKI": 19,"MAZDA": 20,"IVECO": 21,"CHERY": 22,"MAHINDRA": 23,"SSANGYONG": 24,"SKODA": 25,"GREATWALL": 26,"MBK": 27,"CHRYSLER": 28,"PIAGGIO": 29,"MINI": 30,"JEEP": 31,"VOLVO": 32,"YAMAHA": 33,"JAGUAR_LAND_ROVER": 34,"HONDA": 35,"TATA": 36,"PO": 37,"ALFA_ROMEO": 38,"MG": 39,"UNISCOOT": 40,"DAEWOO": 41,"JIALING": 42,"LANCIA": 43,"DAIMLER": 44,"BERLIET": 45,"SCANIA": 46,"DONG_FENG_": 47,"DFSK": 48,"ROVER": 49,"APRILIA": 50,"TUNICOM": 51,"COMET": 52,"LANDINI": 53,"WALLYSCAR": 54,"ZIMOTA": 55,"MALAGUTI": 56,"MAN": 57,"SMART": 58,"DAIHATSU": 59,"JEDAA": 60,"MISTRAL": 61,"AVIA": 62,"MASSEY_FERGUSON": 63,"PORSCHE": 64,"FTM": 65,"CATERPILLAR": 66,"FOTON": 67,"KYMCO": 68,"BAIC": 69,"DEUTZ": 70,"KUBOTA": 71,"DAF": 72,"HUARD-TUNISIE": 73,"VESPA": 74,"GILERA": 75,"COMECAB": 76,"SAME_DEUTZ_FAHR": 77,"SAMSUNG": 78,"HIDROMEK": 79,"KINGLONG": 80,"AUTOBIANCHI": 81,"DS": 82,"BENTLEY": 83,"MASERATI": 84,"AIMA": 85,"INFINITI": 86,"BENZHOU": 87,"BOBCAT": 88,"DOOSAN": 89,"SIMATRA": 90,"SYM": 91,"CASE": 92,"BAOLI": 93,"DODGE": 94,"HAVAL": 95,"MAGIRUS": 96,"LADA": 97,"LAMBORGHINI": 98,"GEELY": 99}, # Map MRQ
+    "dlg": {'Ariana Ville': 0,'Sfax Ville': 1,'Monastir': 2,'El Menzah': 3,'Le Bardo': 4,'Mannouba': 5,'El Mourouj': 6,'Hammamet': 7,'Sousse Ville': 8,'Sakiet Ezzit': 9,'Sousse Jaouhara': 10,'La Marsa': 11,'La Soukra': 12,'Nabeul': 13,'Ben Arous': 14,'Msaken': 15,'Raoued': 16,'Sousse Riadh': 17,'Kairouan Sud': 18,'Moknine': 19,'Bizerte Nord': 20,'Sakiet Eddaier': 21,'Rades': 22,'El Omrane Superieur': 23,'Ezzahra': 24,'Hammam Sousse': 25,'Le Kef Est': 26,'Nouvelle Medina': 27,'Sfax Sud': 28,'El Kabbaria': 29,'Megrine': 30,'Bou Mhel El Bassatine': 31,'Hammam Lif': 32,'Mahdia': 33,'El Ouerdia': 34,'La Goulette': 35,'Gafsa Sud': 36,'Jendouba Nord': 37,'Ksibet El Mediouni': 38,'Beja Nord': 39,'Carthage': 40,'Houmet Essouk': 41,'Korba': 42,'Fouchana': 43,'Hammam Chatt': 44,'Bab Bhar': 45,'Kalaa El Kebira': 46,'Zarzis': 47,'Ettahrir': 48,'Ksar Helal': 49,'Ezzouhour (Tunis)': 50,'Siliana Sud': 51,'Kalaa Essghira': 52,'Kelibia': 53,'Oued Ellil': 54,'Akouda': 55,'Dar Chaabane Elfehri': 56,'Kasserine Nord': 57,'El Hrairia': 58,'Gabes Medina': 59,'Mornag': 60,'Mnihla': 61,'Sayada Lamta Bou Hajar': 62,'Midoun': 63,'Sidi El Bechir': 64,'Cite El Khadra': 65,'Grombalia': 66,'Mohamadia': 67,'Zaghouan': 68,'Sfax Est': 69,'Beni Khiar': 70,'Sidi Hassine': 71,'Ettadhamen': 72,'La Medina': 73,'Teboulba': 74,'Feriana': 75,'Soliman': 76,'Jemmal': 77,'La Chebba': 78,'Mejez El Bab': 79,'Sidi Bouzid Ouest': 80,'Sahline': 81,'Bembla': 82,'El Kram': 83,'Gabes Sud': 84,'Menzel Bourguiba': 85,'Menzel Temime': 86,'Medenine Sud': 87,'El Omrane': 88,'Bou Merdes': 89,'El Ksar': 90,'Ras Jebel': 91,'Ajim': 92,'Mornaguia': 93,'Le Kef Ouest': 94,'Tozeur': 95,'Beni Khalled': 96,'Kebili Sud': 97,'Douar Hicher': 98,'Menzel Jemil': 99,'Testour': 100,'Ghardimaou': 101,'Tajerouine': 102,'Enfidha': 103,'Gabes Ouest': 104,'Essijoumi': 105,'Ksour Essaf': 106,'Douz': 107,'Menzel Bouzelfa': 108,'Tataouine Sud': 109,'Ouerdanine': 110,'Jedaida': 111,'Souassi': 112,'El Hamma': 113,'El Jem': 114,'Bou Argoub': 115,'Zeramdine': 116,'Tinja': 117,'Jebel Jelloud': 118,'Sidi Thabet': 119,'Dahmani': 120,'Mahras': 121,'Bekalta': 122,'Jebeniana': 123,'Kairouan Nord': 124,'Makthar': 125,'Ouled Chamakh': 126,'Agareb': 127,'Bou Salem': 128,'Gaafour': 129,'Bir Ali Ben Khelifa': 130,'Jarzouna': 131,'El Haouaria': 132,'Sakiet Sidi Youssef': 133,'Bou Hajla': 134,'Teboursouk': 135,'Ben Guerdane': 136,'El Guettar': 137,'Ain Draham': 138,'Sned': 139,'Chorbane': 140,'Le Sers': 141,'Ezzouhour (Kasserine)': 142,'El Amra': 143,'Nebeur': 144,'Hammam El Ghezaz': 145,'Sbikha': 146,'Bou Ficha': 147,'Fernana': 148,'Beni Hassen': 149,'El Ksour': 150,'Foussana': 151,'El Hencha': 152,'Sidi Bou Ali': 153,'Degueche': 154,'Kalaat Sinane': 155,'Sidi Alouene': 156,'Hammam Zriba': 157,'Kerkenah': 158,'Metlaoui': 159,'Oueslatia': 160,'Borj El Amri': 161,'Bou Arada': 162,'Tebourba': 163,'Bizerte Sud': 164,'El Mida': 165,'Hergla': 166,'Thala': 167,'El Mdhilla': 168,'Sbeitla': 169,'Tabarka': 170,'Nasrallah': 171,'El Fahs': 172,'Bir Mcherga': 173,'Souk El Ahad': 174,'Jendouba': 175,'Cherarda': 176,'Mareth': 177,'Mateur': 178,'Hajeb El Ayoun': 179,'Le Krib': 180,'Ennadhour': 181,'Moulares': 182,'Nefza': 183,'Mejel Bel Abbes': 184,'El Metouia': 185,'Haffouz': 186,'Oued Mliz': 187,'Chebika': 188,'Ghar El Melh': 189,'Bab Souika': 190,'El Alia': 191,'El Ala': 192,'Tataouine Nord': 193,'Menzel Chaker': 194,'Kalaat Landlous': 195,'Esskhira': 196,'Rohia': 197,'Regueb': 198,'Bargou': 199,'Sidi El Heni': 200,'Redeyef': 201,'Kesra': 202,'Hassi El Frid': 203,'Sidi Aich': 204,'Nefta': 205,'Beni Khedache': 206,'Jerissa': 207,'Nouvelle Matmata': 208,'Kebili Nord': 209,'Ghomrassen': 210,'Melloulech': 211,'Utique': 212,'Kalaa El Khasba': 213,'El Battan': 214,'Thibar': 215,'Maknassy': 216,'Amdoun': 217,'Takelsa': 218,'Ghannouche': 219,'Sidi Bouzid Est': 220,'Goubellat': 221,'El Aroussa': 222,'Saouef': 223,'Sidi Bou Rouis': 224,'Sejnane': 225,'Kasserine Sud': 226,'Smar': 227,'Bir El Haffey': 228,'Ouled Haffouz': 229,'Ben Oun': 230,'Kondar': 231,'Mezzouna': 232,'Jilma': 233,'Sbiba': 234,'Ghraiba': 235,'Bir Lahmar': 236,'Beja Sud': 237,'Joumine': 238,'Dhehiba': 239,'Haidra': 240,'Hbira': 241,'Menzel Bouzaiene': 242,'Gafsa Nord': 243,'Belkhir': 244,'Cebbala': 245,'Sidi Makhlouf': 246,'Jediliane': 247,'Touiref': 248,'Balta Bou Aouene': 249,'Menzel Habib': 250,'Matmata': 251,'Souk Jedid': 252,'Tameghza': 253,'Remada': 254,'Medenine Nord': 255,'Hezoua': 256,'Ghezala': 257,'El Faouar': 258,'El Ayoun': 259}, # Map DLG
+    "crs": {"CI-4P": 0,"BREAK": 1,"CAMIONNETTE": 2,"CI-2P": 3,"CABRIOLET": 4,"CI-5P": 5,"PLATEAU": 6,"FOURGON": 7,"MIXTE": 8,"SOLO": 9,"CI-3P": 10,"BENNE": 11,"CAMION": 12,"ENGIN": 13,"mult_CAROSSERIE": 14,"BUS": 15,"PR REM": 16,"ENGIN_AGRICOLE": 17,"REMORQUAGE": 18,"BD": 19,"BACHE": 20,"PR SREM": 21}, # Map CRS
+    "en": {"ES" : 0,"DI" : 1}, # Map EN
+    "sx" : {"M":0, "F":1,"JP":2,"C":3}, # Map SX
+}
+
+# Add range-based mappings (can be kept here or loaded separately)
+# These aren't directly used by the RF script's mapping section but are here for reference
+# If these features were meant to be binned first, that would be an extra preprocessing step
+predefined_mappings["age_objet_assuree"] = [{"min": 0, "max": 1, "level": 1}, {"min": 1, "max": 4, "level": 2}, {"min": 4, "max": 9, "level": 3}, {"min": 9, "max": 14, "level": 4}, {"min": 14, "max": 19, "level": 5}, {"min": 19, "max": 90, "level": 6}]
+predefined_mappings["age_client"] = [{"min": 18, "max": 24, "level": 1}, {"min": 24, "max": 29, "level": 2}, {"min": 29, "max": 39, "level": 3}, {"min": 39, "max": 49, "level": 4}, {"min": 49, "max": 59, "level": 5}, {"min": 59, "max": 69, "level": 6}, {"min": 69, "max": 79, "level": 7}, {"min": 79, "max": 120, "level": 8}]
+predefined_mappings["place"] = [{"min": 1, "max": 5, "level": 1}, {"min": 5, "max": 9, "level": 2}, {"min": 9, "max": 29, "level": 3}, {"min": 29, "max": 59, "level": 4}, {"min": 59, "max": 999, "level": 5}]
+predefined_mappings["anciennete"] = [{"min": 0, "max": 2, "level": 1}, {"min": 2, "max": 6, "level": 2}, {"min": 6, "max": 14, "level": 3}, {"min": 14, "max": 19, "level": 4}, {"min": 19, "max": 99, "level": 5}, {"min": 99, "max": 999, "level": 6}]
+predefined_mappings["puissance"] = [{"min": 0, "max": 3, "level": 1}, {"min": 3, "max": 4, "level": 2}, {"min": 4, "max": 6, "level": 3}, {"min": 6, "max": 9, "level": 4}, {"min": 9, "max": 14, "level": 5}, {"min": 14, "max": 49, "level": 6}, {"min": 49, "max": 999, "level": 7}]
+predefined_mappings["valeur_ranges"] = [{"min": 0, "max": 9999, "level": 1}, {"min": 9999, "max": 19999, "level": 2}, {"min": 19999, "max": 29999, "level": 3}, {"min": 29999, "max": 49999, "level": 4}, {"min": 49999, "max": 99999, "level": 5}, {"min": 99999, "max": 499999, "level": 6}, {"min": 499999, "max": 999999, "level": 7}, {"min": 999999, "max": 9999999, "level": 8}]
+predefined_mappings["charge_utile"] = [{"min": 0, "max": 1, "level": 1}, {"min": 1, "max": 1.6, "level": 2}, {"min": 1.6, "max": 3, "level": 3}, {"min": 3, "max": 10, "level": 4}, {"min": 10, "max": 999, "level": 5}]
+
+
+def get_level_insurance(value, ranges_list):
+    # ... (your existing get_level_insurance function) ...
+    # This function is fine, but its usage for model input features needs to be re-evaluated.
+    if not isinstance(ranges_list, list):
+        raise TypeError("ranges_list must be a list of dictionaries.")
+    if not ranges_list:
+        raise ValueError("ranges_list cannot be empty.")
+
+    for range_def in ranges_list:
+        if not all(k in range_def for k in ["min", "max", "level"]):
+            raise ValueError("Each range_def must contain 'min', 'max', and 'level' keys.")
+
+        try:
+            min_val = type(value)(range_def["min"])
+            max_val = type(value)(range_def["max"])
+        except (ValueError, TypeError) as e:
+            failed_key = "min" if isinstance(range_def["min"], str) and not str(range_def["min"]).replace('.', '', 1).isdigit() else "max"
+            raise TypeError(f"Value for '{failed_key}' ('{range_def[failed_key]}') in range_def {range_def} could not be cast to the type of input value {value} (type {type(value).__name__}): {e}")
+
+        if min_val <= value < max_val:
+            return range_def["level"]
+
+    last_range = ranges_list[-1]
+    last_min_val = type(value)(last_range["min"])
+    last_max_val = type(value)(last_range["max"])
+
+    if last_min_val <= value <= last_max_val :
+        return last_range["level"]
+
+    raise ValueError(f"Value {value} (type: {type(value).__name__}) is out of the defined mapping ranges. Last range was {last_range}. Ranges: {ranges_list}")from app import app  # UPDATED import
+
+if __name__ == '__main__':
+    app.run(debug=app.config.get('DEBUG', True), 
+            port=app.config.get('PORT', 5003), # Ensure port matches config
+            host='0.0.0.0') # Makes it accessible on the network if needed# services/data_processing.py
+import numpy as np
+import pandas as pd # Useful for organizing data before converting to numpy
+
+# get_level_insurance might not be needed here for model features if they are direct numerics
+# from utils.mappings import get_level_insurance # Only if used for display or non-model features
+
+def preprocess_form_data(form_data_dict, model_artifacts_dict):
+    """
+    Processes raw form data into a NumPy array for model prediction.
+    Aligns with the preprocessing steps of the new training scripts.
+    """
+    # Extract components from the loaded model artifacts
+    imputer = model_artifacts_dict['imputer']
+    scaler = model_artifacts_dict['scaler']
+    feature_order = model_artifacts_dict['feature_order'] # CRITICAL
+    # The actual string-to-int maps are in `model_artifacts_dict['predefined_mappings']` if needed,
+    # but form values for SelectFields are already the strings we need to map.
+    # We need the map.py (loaded as form_select_mappings in app.py) to do the mapping.
+    from utils.mappings import predefined_mappings as all_mappings_for_app
+
+    raw_input_dict_for_display = form_data_dict.copy()
+
+    # --- Prepare data in a dictionary matching expected feature names ---
+    # This helps manage inputs before converting to the ordered NumPy array.
+    processed_data = {}
+
+    # Training script's CATEGORICAL_FEATURES:
+    # ["USG", "ACT", "DLG", "CIV", "MRQ", "CRS", "EN", "SX"]
+    # Map form field names to these training feature names
+    # (form_field_name, training_feature_name, mapping_key_in_all_mappings)
+    categorical_mapping_info = [
+        ('usage', 'USG', 'usg'),
+        ('activite', 'ACT', 'act'),
+        ('delegation', 'DLG', 'dlg'),
+        ('civilite', 'CIV', 'civ'),
+        ('marque', 'MRQ', 'mrq'),
+        ('carrosserie', 'CRS', 'crs'),
+        ('energie', 'EN', 'en'),
+        ('sexe', 'SX', 'sx')
+    ]
+
+    for form_key, model_feature_name, map_key_in_all_mappings in categorical_mapping_info:
+        form_value_str = form_data_dict.get(form_key)
+        if form_value_str is not None and form_value_str != '':
+            # Use the mappings from all_mappings_for_app (which is a copy of training map.py)
+            mapped_value = all_mappings_for_app[map_key_in_all_mappings].get(form_value_str)
+            if mapped_value is None:
+                # Value from form not in map, will become NaN
+                processed_data[model_feature_name] = np.nan
+                print(f"Warning: Value '{form_value_str}' for '{form_key}' (feature {model_feature_name}) not found in mapping. Will be imputed.")
+            else:
+                processed_data[model_feature_name] = mapped_value
+        else:
+            processed_data[model_feature_name] = np.nan # Empty or None from form becomes NaN for imputer
+
+    # Training script's NUMERIC_FEATURES:
+    # ["PSS", "AGO", "VV", "VN", "CU", "ANC", "CLS", "AGE", "PLA"]
+    # Map form field names to these training feature names
+    # (form_field_name, training_feature_name, data_type_converter)
+    numeric_mapping_info = [
+        ('puissance', 'PSS', int),
+        ('age_objet_assuree', 'AGO', int),
+        ('valeur_venale', 'VV', int),   # Assuming this maps to VV
+        ('valeur_neuve', 'VN', int),    # Assuming this maps to VN
+        ('charge_utile', 'CU', float),
+        ('anciennete', 'ANC', int),
+        ('classe', 'CLS', float), # 'classe' from form is numeric-like string e.g. "8.0"
+        ('age_client', 'AGE', int),
+        ('place', 'PLA', int)
+    ]
+
+    for form_key, model_feature_name, converter_func in numeric_mapping_info:
+        form_value = form_data_dict.get(form_key)
+        if form_value is not None and str(form_value) != '': # Check for empty strings too
+            try:
+                processed_data[model_feature_name] = converter_func(form_value)
+            except (ValueError, TypeError):
+                processed_data[model_feature_name] = np.nan # Coercion error, becomes NaN
+                print(f"Warning: Value '{form_value}' for '{form_key}' (feature {model_feature_name}) could not be converted to numeric. Will be imputed.")
+        else:
+            processed_data[model_feature_name] = np.nan # Empty or None from form
+
+    # --- Create DataFrame in the correct feature order ---
+    # This ensures that when we convert to NumPy, it's in the order the imputer/scaler expect
+    # and that the model was trained on.
+    try:
+        # Create a temporary DataFrame from processed_data, then reorder
+        temp_df = pd.DataFrame([processed_data])
+        # Ensure all columns from feature_order are present, fill missing with NaN
+        for col in feature_order:
+            if col not in temp_df.columns:
+                temp_df[col] = np.nan
+        features_df_ordered = temp_df[feature_order]
+    except KeyError as e:
+        raise ValueError(f"Missing expected feature in processed data: {e}. Check form field names and mapping logic.")
+
+    # Convert to NumPy array (should now have NaNs where appropriate)
+    features_np_raw_ordered = features_df_ordered.to_numpy()
+
+    if features_np_raw_ordered.shape[1] != len(feature_order):
+        raise ValueError(f"Feature array shape mismatch before imputation. Expected {len(feature_order)} features, got {features_np_raw_ordered.shape[1]}. Check feature_order and processing.")
+
+    # --- Apply Imputer ---
+    try:
+        features_imputed_np = imputer.transform(features_np_raw_ordered)
+    except Exception as e:
+        raise ValueError(f"Error during imputation: {e}. Input shape: {features_np_raw_ordered.shape}")
+
+
+    # --- Apply Scaler ---
+    try:
+        features_scaled_np = scaler.transform(features_imputed_np)
+    except Exception as e:
+        raise ValueError(f"Error during scaling: {e}. Input shape: {features_imputed_np.shape}")
+
+
+    # Final check on feature count
+    expected_feature_count = len(feature_order)
+    if features_scaled_np.shape[1] != expected_feature_count:
+         raise ValueError(f"Processed feature array has incorrect shape: {features_scaled_np.shape}. Expected (1, {expected_feature_count}).")
+
+    return features_scaled_np, raw_input_dict_for_display# services/llm_service.py
+import google.generativeai as genai
+from flask import current_app # To access app.config
+
+# This will be configured when the app starts or on first call
+GEMINI_MODEL = None
+
+def configure_gemini():
+    """Configures the Gemini API key and model."""
+    global GEMINI_MODEL
+    api_key = current_app.config.get("GEMINI_API_KEY")
+    if not api_key:
+        current_app.logger.error("GEMINI_API_KEY not found in configuration. LLM service will not work.")
+        return False
+    try:
+        genai.configure(api_key=api_key)
+        # Use gemini-1.5-flash for speed and cost-effectiveness.
+        # Verify the exact model name from Google's documentation if this changes.
+        GEMINI_MODEL = genai.GenerativeModel('gemini-1.5-flash-latest') # Or 'gemini-1.5-flash'
+        current_app.logger.info("Gemini API configured successfully with model 'gemini-1.5-flash-latest'.")
+        return True
+    except Exception as e:
+        current_app.logger.error(f"Error configuring Gemini API: {e}", exc_info=True)
+        GEMINI_MODEL = None # Ensure model is None if config fails
+        return False
+
+def generate_risk_summary_with_gemini(risk_data_dict):
+    """
+    Generates a risk summary using the Gemini API.
+    risk_data_dict should contain:
+    - model_prediction: "Risky" or "Not Risky"
+    - confidence: float (probability of the predicted class)
+    - client_age: int
+    - vehicle_age: int
+    - horsepower: int
+    - (Optionally add other key features from form_data_display if relevant for summary)
+    """
+    if GEMINI_MODEL is None:
+        # Attempt to configure if not already done (e.g., after app restart or first call)
+        if not configure_gemini():
+            return "LLM Service (Gemini) is not configured. Please check API key and server logs."
+
+    prediction = risk_data_dict.get("model_prediction", "N/A")
+    confidence = risk_data_dict.get("confidence", 0) * 100 # As percentage
+    client_age = risk_data_dict.get("client_age", "N/A")
+    vehicle_age = risk_data_dict.get("vehicle_age", "N/A")
+    horsepower = risk_data_dict.get("horsepower", "N/A")
+    # You can add more features here if they are useful for the LLM prompt
+    # For example:
+    vehicle_usage = risk_data_dict.get("vehicle_usage_display", "N/A")
+    client_activity = risk_data_dict.get("client_activity_display", "N/A")
+
+    prompt = f"""
+    Analyze the following car insurance risk assessment and provide a concise, helpful summary for an underwriter.
+    The client has been predicted as **{prediction}**.
+    The confidence in this prediction is {confidence:.1f}%.
+
+    Key client and vehicle details:
+    - Client Age: {client_age} years
+    - Vehicle Age: {vehicle_age} years
+    - Vehicle Horsepower (Fiscal): {horsepower}
+
+    Consider these factors and provide:
+    1. A brief reiteration of the risk level.
+    2. Potential reasons or contributing factors (be general if specific feature importance isn't available).
+    3. A suggested next step or consideration for the underwriter.
+
+    Keep the summary to 2-3 sentences. Be professional and direct.
+    Example for Risky: "The model indicates a {prediction.lower()} profile with {confidence:.1f}% confidence. Factors such as younger client age or older vehicle age might contribute. Recommend reviewing the application details closely and consider premium adjustment or further checks."
+    Example for Not Risky: "The model suggests a {prediction.lower()} profile with {confidence:.1f}% confidence. The client's details (Age: {client_age}, Vehicle Age: {vehicle_age}) align with lower-risk indicators. Standard underwriting procedures are likely appropriate."
+    """
+
+    try:
+        current_app.logger.info(f"Sending prompt to Gemini: {prompt[:200]}...") # Log snippet
+        response = GEMINI_MODEL.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                # candidate_count=1, # Default is 1
+                # stop_sequences=['.'], # Optional: if you want to force shorter sentences
+                max_output_tokens=150, # Adjust as needed
+                temperature=0.3 # Lower for more factual, higher for more creative
+            )
+        )
+        current_app.logger.info(f"Gemini response received. Safety: {response.prompt_feedback}")
+        if response.parts:
+            summary = response.text
+            current_app.logger.info(f"Gemini summary: {summary}")
+            return summary
+        elif response.prompt_feedback and response.prompt_feedback.block_reason:
+            block_reason = response.prompt_feedback.block_reason
+            safety_ratings_str = ", ".join([f"{sr.category}: {sr.probability}" for sr in response.prompt_feedback.safety_ratings])
+            current_app.logger.warning(f"Gemini content generation blocked. Reason: {block_reason}. Safety Ratings: [{safety_ratings_str}]")
+            return f"LLM content generation was blocked due to safety settings (Reason: {block_reason}). Please try rephrasing or check content policies."
+        else:
+            current_app.logger.warning("Gemini response has no parts and no block reason. Full response: %s", response)
+            return "LLM (Gemini) returned an empty or unexpected response."
+
+    except Exception as e:
+        current_app.logger.error(f"Error calling Gemini API: {e}", exc_info=True)
+        return f"Error generating summary with LLM (Gemini): {str(e)}"
+
+# You can rename this if you prefer, or keep the old name for compatibility in app.py
+# This makes the change transparent to app.py for now.
+def get_pangu_llm_summary_mock(risk_data_dict): # Keep old name for now
+    return generate_risk_summary_with_gemini(risk_data_dict)# services/prediction_service.py
+import numpy as np
+# No need for pickle here if model object is passed in
+
+def get_model_prediction(processed_features_np, loaded_model_object):
+    """
+    Gets a prediction using the already loaded model object.
+    """
+    if processed_features_np.shape[1] != loaded_model_object.n_features_in_:
+         raise ValueError(f"Model expects {loaded_model_object.n_features_in_} input features, "
+                          f"but received {processed_features_np.shape[1]}. Check data preprocessing.")
+    try:
+        prediction = loaded_model_object.predict(processed_features_np)
+        probability = loaded_model_object.predict_proba(processed_features_np)
+        # prediction[0] and probability[0] assume single sample prediction
+        return prediction[0], probability[0]
+    except Exception as e:
+        raise Exception(f"Error during prediction: {e}")/* static/css/input.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: Add custom base styles or components here */
+/* For example, if you want to define some global styles for `body` or specific Shadcn variables */
+/* This is where you'd define the HSL variables if they are not directly in tailwind.config.js */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    /* ... other light mode variables ... */
+    --radius: 0.5rem; /* Example */
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    /* ... other dark mode variables ... */
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1; /* Optional: for better font rendering */
+  }
+}*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}[multiple],[type=date],[type=datetime-local],[type=email],[type=month],[type=number],[type=password],[type=search],[type=tel],[type=text],[type=time],[type=url],[type=week],input:where(:not([type])),select,textarea{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;border-color:#6b7280;border-width:1px;border-radius:0;padding:.5rem .75rem;font-size:1rem;line-height:1.5rem;--tw-shadow:0 0 #0000}[multiple]:focus,[type=date]:focus,[type=datetime-local]:focus,[type=email]:focus,[type=month]:focus,[type=number]:focus,[type=password]:focus,[type=search]:focus,[type=tel]:focus,[type=text]:focus,[type=time]:focus,[type=url]:focus,[type=week]:focus,input:where(:not([type])):focus,select:focus,textarea:focus{outline:2px solid transparent;outline-offset:2px;--tw-ring-inset:var(--tw-empty,/*!*/ /*!*/);--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:#2563eb;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow);border-color:#2563eb}input::-moz-placeholder,textarea::-moz-placeholder{color:#6b7280;opacity:1}input::placeholder,textarea::placeholder{color:#6b7280;opacity:1}::-webkit-datetime-edit-fields-wrapper{padding:0}::-webkit-date-and-time-value{min-height:1.5em;text-align:inherit}::-webkit-datetime-edit{display:inline-flex}::-webkit-datetime-edit,::-webkit-datetime-edit-day-field,::-webkit-datetime-edit-hour-field,::-webkit-datetime-edit-meridiem-field,::-webkit-datetime-edit-millisecond-field,::-webkit-datetime-edit-minute-field,::-webkit-datetime-edit-month-field,::-webkit-datetime-edit-second-field,::-webkit-datetime-edit-year-field{padding-top:0;padding-bottom:0}select{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");background-position:right .5rem center;background-repeat:no-repeat;background-size:1.5em 1.5em;padding-right:2.5rem;-webkit-print-color-adjust:exact;print-color-adjust:exact}[multiple],[size]:where(select:not([size="1"])){background-image:none;background-position:0 0;background-repeat:unset;background-size:initial;padding-right:.75rem;-webkit-print-color-adjust:unset;print-color-adjust:unset}[type=checkbox],[type=radio]{-webkit-appearance:none;-moz-appearance:none;appearance:none;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;display:inline-block;vertical-align:middle;background-origin:border-box;-webkit-user-select:none;-moz-user-select:none;user-select:none;flex-shrink:0;height:1rem;width:1rem;color:#2563eb;background-color:#fff;border-color:#6b7280;border-width:1px;--tw-shadow:0 0 #0000}[type=checkbox]{border-radius:0}[type=radio]{border-radius:100%}[type=checkbox]:focus,[type=radio]:focus{outline:2px solid transparent;outline-offset:2px;--tw-ring-inset:var(--tw-empty,/*!*/ /*!*/);--tw-ring-offset-width:2px;--tw-ring-offset-color:#fff;--tw-ring-color:#2563eb;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}[type=checkbox]:checked,[type=radio]:checked{border-color:transparent;background-color:currentColor;background-size:100% 100%;background-position:50%;background-repeat:no-repeat}[type=checkbox]:checked{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23fff' viewBox='0 0 16 16'%3E%3Cpath d='M12.207 4.793a1 1 0 0 1 0 1.414l-5 5a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L6.5 9.086l4.293-4.293a1 1 0 0 1 1.414 0'/%3E%3C/svg%3E")}@media (forced-colors:active) {[type=checkbox]:checked{-webkit-appearance:auto;-moz-appearance:auto;appearance:auto}}[type=radio]:checked{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23fff' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3'/%3E%3C/svg%3E")}@media (forced-colors:active) {[type=radio]:checked{-webkit-appearance:auto;-moz-appearance:auto;appearance:auto}}[type=checkbox]:checked:focus,[type=checkbox]:checked:hover,[type=radio]:checked:focus,[type=radio]:checked:hover{border-color:transparent;background-color:currentColor}[type=checkbox]:indeterminate{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 16 16'%3E%3Cpath stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 8h8'/%3E%3C/svg%3E");border-color:transparent;background-color:currentColor;background-size:100% 100%;background-position:50%;background-repeat:no-repeat}@media (forced-colors:active) {[type=checkbox]:indeterminate{-webkit-appearance:auto;-moz-appearance:auto;appearance:auto}}[type=checkbox]:indeterminate:focus,[type=checkbox]:indeterminate:hover{border-color:transparent;background-color:currentColor}[type=file]{background:unset;border-color:inherit;border-width:0;border-radius:0;padding:0;font-size:unset;line-height:inherit}[type=file]:focus{outline:1px solid ButtonText;outline:1px auto -webkit-focus-ring-color}@font-face{font-family:Inter;font-style:normal;font-weight:400;font-display:swap;src:url(../fonts/inter/Inter-Regular.woff2) format("woff2")}@font-face{font-family:Inter;font-style:normal;font-weight:500;font-display:swap;src:url(../fonts/inter/Inter-Medium.woff2) format("woff2")}@font-face{font-family:Inter;font-style:normal;font-weight:600;font-display:swap;src:url(../fonts/inter/Inter-SemiBold.woff2) format("woff2")}@font-face{font-family:Inter;font-style:normal;font-weight:700;font-display:swap;src:url(../fonts/inter/Inter-Bold.woff2) format("woff2")}:root{--background:0 0% 100%;--foreground:240 10% 3.9%;--card:0 0% 100%;--card-foreground:240 10% 3.9%;--popover:0 0% 100%;--popover-foreground:240 10% 3.9%;--primary:240 5.9% 10%;--primary-foreground:0 0% 98%;--secondary:240 4.8% 95.9%;--secondary-foreground:240 5.9% 10%;--muted:240 4.8% 95.9%;--muted-foreground:240 3.8% 46.1%;--accent:240 4.8% 95.9%;--accent-foreground:240 5.9% 10%;--destructive:0 84.2% 60.2%;--destructive-foreground:0 0% 98%;--border:240 5.9% 90%;--input:240 5.9% 90%;--ring:240 5.9% 10%;--radius:0.5rem}.dark{--background:240 10% 3.9%;--foreground:0 0% 98%;--card:240 10% 3.9%;--card-foreground:0 0% 98%;--popover:240 10% 3.9%;--popover-foreground:0 0% 98%;--primary:0 0% 98%;--primary-foreground:240 5.9% 10%;--secondary:240 3.7% 15.9%;--secondary-foreground:0 0% 98%;--muted:240 3.7% 15.9%;--muted-foreground:240 5% 64.9%;--accent:240 3.7% 15.9%;--accent-foreground:0 0% 98%;--destructive:0 72.2% 50.6%;--destructive-foreground:0 0% 98%;--border:240 3.7% 15.9%;--input:240 3.7% 15.9%;--ring:240 4.9% 83.9%}body{background-color:hsl(var(--background));font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji;color:hsl(var(--foreground));-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh}.\!container{width:100%!important;margin-right:auto!important;margin-left:auto!important;padding-right:2rem!important;padding-left:2rem!important}.container{width:100%;margin-right:auto;margin-left:auto;padding-right:2rem;padding-left:2rem}@media (min-width:1400px){.\!container{max-width:1400px!important}.container{max-width:1400px}}.form-input,.form-multiselect,.form-select,.form-textarea{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;border-color:#6b7280;border-width:1px;border-radius:0;padding:.5rem .75rem;font-size:1rem;line-height:1.5rem;--tw-shadow:0 0 #0000}.form-input:focus,.form-multiselect:focus,.form-select:focus,.form-textarea:focus{outline:2px solid transparent;outline-offset:2px;--tw-ring-inset:var(--tw-empty,/*!*/ /*!*/);--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:#2563eb;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow);border-color:#2563eb}.form-input::-moz-placeholder,.form-textarea::-moz-placeholder{color:#6b7280;opacity:1}.form-input::placeholder,.form-textarea::placeholder{color:#6b7280;opacity:1}.form-input::-webkit-datetime-edit-fields-wrapper{padding:0}.form-input::-webkit-date-and-time-value{min-height:1.5em;text-align:inherit}.form-input::-webkit-datetime-edit{display:inline-flex}.form-input::-webkit-datetime-edit,.form-input::-webkit-datetime-edit-day-field,.form-input::-webkit-datetime-edit-hour-field,.form-input::-webkit-datetime-edit-meridiem-field,.form-input::-webkit-datetime-edit-millisecond-field,.form-input::-webkit-datetime-edit-minute-field,.form-input::-webkit-datetime-edit-month-field,.form-input::-webkit-datetime-edit-second-field,.form-input::-webkit-datetime-edit-year-field{padding-top:0;padding-bottom:0}.form-select{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");background-position:right .5rem center;background-repeat:no-repeat;background-size:1.5em 1.5em;padding-right:2.5rem;-webkit-print-color-adjust:exact;print-color-adjust:exact}.form-select:where([size]:not([size="1"])){background-image:none;background-position:0 0;background-repeat:unset;background-size:initial;padding-right:.75rem;-webkit-print-color-adjust:unset;print-color-adjust:unset}.btn{display:inline-flex;align-items:center;justify-content:center;border-radius:calc(var(--radius) - 2px);font-size:.875rem;line-height:1.25rem;font-weight:500;--tw-ring-offset-color:hsl(var(--background));transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.btn:focus-visible{outline:2px solid transparent;outline-offset:2px;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000);--tw-ring-color:hsl(var(--ring));--tw-ring-offset-width:2px}.btn:disabled{pointer-events:none;opacity:.5}.btn-primary{background-color:hsl(var(--primary));color:hsl(var(--primary-foreground))}.btn-primary:hover{background-color:hsl(var(--primary)/.9)}.btn-secondary{background-color:hsl(var(--secondary));color:hsl(var(--secondary-foreground))}.btn-secondary:hover{background-color:hsl(var(--secondary)/.8)}.btn-outline{border-width:1px;border-color:hsl(var(--input));background-color:hsl(var(--background))}.btn-ghost:hover,.btn-outline:hover{background-color:hsl(var(--accent));color:hsl(var(--accent-foreground))}.btn-lg{height:2.75rem;border-radius:calc(var(--radius) - 2px);padding-left:2rem;padding-right:2rem}.btn-md{height:2.5rem;padding:.5rem 1rem}.btn-sm{height:2.25rem;border-radius:calc(var(--radius) - 2px);padding-left:.75rem;padding-right:.75rem}.btn-icon{height:2.5rem;width:2.5rem}.card{border-radius:var(--radius);border-width:1px;background-color:hsl(var(--card));color:hsl(var(--card-foreground));--tw-shadow:0 1px 2px 0 rgba(0,0,0,.05);--tw-shadow-colored:0 1px 2px 0 var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.card-header{display:flex;flex-direction:column}.card-header>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.375rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.375rem*var(--tw-space-y-reverse))}.card-header{padding:1rem}@media (min-width:640px){.card-header{padding:1.5rem}}.card-title{font-size:1.125rem;line-height:1.75rem;font-weight:600;line-height:1;letter-spacing:-.025em}.card-description{font-size:.875rem;line-height:1.25rem;color:hsl(var(--muted-foreground))}.card-content{padding:0 1rem 1rem}@media (min-width:640px){.card-content{padding:0 1.5rem 1.5rem}}.form-input{display:flex;height:2.5rem;width:100%;border-radius:calc(var(--radius) - 2px);border-width:1px;border-color:hsl(var(--input));background-color:hsl(var(--background));padding:.5rem .75rem;font-size:.875rem;line-height:1.25rem;--tw-ring-offset-color:hsl(var(--background))}.form-input::file-selector-button{border-width:0;background-color:transparent;font-size:.875rem;line-height:1.25rem;font-weight:500}.form-input::-moz-placeholder{color:hsl(var(--muted-foreground))}.form-input::placeholder{color:hsl(var(--muted-foreground))}.form-input:focus-visible{outline:2px solid transparent;outline-offset:2px;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000);--tw-ring-color:hsl(var(--ring));--tw-ring-offset-width:2px}.form-input:disabled{cursor:not-allowed;opacity:.5}.form-select{display:block;height:2.5rem;width:100%;-webkit-appearance:none;-moz-appearance:none;appearance:none;border-radius:calc(var(--radius) - 2px);border-width:1px;border-color:hsl(var(--input));background-color:hsl(var(--background));background-repeat:no-repeat;padding:.5rem 2rem .5rem .75rem;font-size:.875rem;line-height:1.25rem;--tw-ring-offset-color:hsl(var(--background))}.form-select::-moz-placeholder{color:hsl(var(--muted-foreground))}.form-select::placeholder{color:hsl(var(--muted-foreground))}.form-select:focus{outline:2px solid transparent;outline-offset:2px;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000);--tw-ring-color:hsl(var(--ring));--tw-ring-offset-width:2px}.form-select:disabled{cursor:not-allowed;opacity:.5}.form-select{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");background-position:right .5rem center;background-size:1.5em 1.5em}.dark .form-select{background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E")}.form-input,.form-multiselect,.form-select,.form-textarea{border-radius:calc(var(--radius) - 2px)}.form-input:focus,.form-multiselect:focus,.form-select:focus,.form-textarea:focus{border-color:transparent;--tw-ring-offset-width:0px}input.flatpickr-input.form-input:focus-visible{outline:2px solid transparent;outline-offset:2px;--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000);--tw-ring-color:hsl(var(--ring));--tw-ring-offset-width:2px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}.static{position:static}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.sticky{position:sticky}.inset-0{inset:0}.inset-x-0{left:0;right:0}.right-4{right:1rem}.top-0{top:0}.top-14{top:3.5rem}.top-4{top:1rem}.z-10{z-index:10}.z-40{z-index:40}.z-50{z-index:50}.z-\[100\]{z-index:100}.-m-2{margin:-.5rem}.m-1{margin:.25rem}.mx-auto{margin-left:auto;margin-right:auto}.my-3{margin-top:.75rem;margin-bottom:.75rem}.my-6{margin-top:1.5rem;margin-bottom:1.5rem}.mb-1{margin-bottom:.25rem}.mb-1\.5{margin-bottom:.375rem}.mb-10{margin-bottom:2.5rem}.mb-12{margin-bottom:3rem}.mb-2{margin-bottom:.5rem}.mb-3{margin-bottom:.75rem}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.ml-1{margin-left:.25rem}.ml-2{margin-left:.5rem}.mr-1{margin-right:.25rem}.mr-1\.5{margin-right:.375rem}.mr-2{margin-right:.5rem}.mr-6{margin-right:1.5rem}.mt-1{margin-top:.25rem}.mt-10{margin-top:2.5rem}.mt-2{margin-top:.5rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-8{margin-top:2rem}.block{display:block}.inline-block{display:inline-block}.inline{display:inline}.flex{display:flex}.inline-flex{display:inline-flex}.table{display:table}.grid{display:grid}.hidden{display:none}.h-10{height:2.5rem}.h-12{height:3rem}.h-14{height:3.5rem}.h-16{height:4rem}.h-20{height:5rem}.h-3\.5{height:.875rem}.h-4{height:1rem}.h-5{height:1.25rem}.h-6{height:1.5rem}.h-64{height:16rem}.h-72{height:18rem}.h-8{height:2rem}.h-80{height:20rem}.h-9{height:2.25rem}.h-auto{height:auto}.h-full{height:100%}.h-px{height:1px}.max-h-96{max-height:24rem}.max-h-\[500px\]{max-height:500px}.max-h-\[65vh\]{max-height:65vh}.min-h-\[350px\]{min-height:350px}.min-h-\[400px\]{min-height:400px}.min-h-\[60vh\]{min-height:60vh}.min-h-screen{min-height:100vh}.w-10{width:2.5rem}.w-12{width:3rem}.w-16{width:4rem}.w-20{width:5rem}.w-3\.5{width:.875rem}.w-4{width:1rem}.w-5{width:1.25rem}.w-6{width:1.5rem}.w-8{width:2rem}.w-9{width:2.25rem}.w-auto{width:auto}.w-full{width:100%}.min-w-full{min-width:100%}.max-w-4xl{max-width:56rem}.max-w-5xl{max-width:64rem}.max-w-7xl{max-width:80rem}.max-w-\[42rem\]{max-width:42rem}.max-w-\[58rem\]{max-width:58rem}.max-w-\[64rem\]{max-width:64rem}.max-w-\[85\%\]{max-width:85%}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}.flex-1{flex:1 1 0%}.flex-grow{flex-grow:1}.basis-28{flex-basis:7rem}.origin-top{transform-origin:top}.-translate-y-1{--tw-translate-y:-0.25rem}.-translate-y-1,.translate-y-0{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.translate-y-0{--tw-translate-y:0px}.rotate-0{--tw-rotate:0deg}.rotate-0,.rotate-90{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.rotate-90{--tw-rotate:90deg}.scale-0{--tw-scale-x:0;--tw-scale-y:0}.scale-0,.scale-100{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.scale-100{--tw-scale-x:1;--tw-scale-y:1}@keyframes spin{to{transform:rotate(1turn)}}.animate-spin{animation:spin 1s linear infinite}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-start{align-items:flex-start}.items-center{align-items:center}.justify-end{justify-content:flex-end}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}.gap-6{gap:1.5rem}.gap-y-3{row-gap:.75rem}.space-x-2>:not([hidden])~:not([hidden]){--tw-space-x-reverse:0;margin-right:calc(.5rem*var(--tw-space-x-reverse));margin-left:calc(.5rem*(1 - var(--tw-space-x-reverse)))}.space-x-6>:not([hidden])~:not([hidden]){--tw-space-x-reverse:0;margin-right:calc(1.5rem*var(--tw-space-x-reverse));margin-left:calc(1.5rem*(1 - var(--tw-space-x-reverse)))}.space-y-3>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.75rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.75rem*var(--tw-space-y-reverse))}.space-y-4>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem*var(--tw-space-y-reverse))}.space-y-5>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1.25rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1.25rem*var(--tw-space-y-reverse))}.space-y-6>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1.5rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1.5rem*var(--tw-space-y-reverse))}.space-y-8>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(2rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(2rem*var(--tw-space-y-reverse))}.divide-y>:not([hidden])~:not([hidden]){--tw-divide-y-reverse:0;border-top-width:calc(1px*(1 - var(--tw-divide-y-reverse)));border-bottom-width:calc(1px*var(--tw-divide-y-reverse))}.divide-border>:not([hidden])~:not([hidden]){border-color:hsl(var(--border))}.overflow-x-auto{overflow-x:auto}.overflow-y-auto{overflow-y:auto}.whitespace-nowrap{white-space:nowrap}.rounded{border-radius:.25rem}.rounded-2xl{border-radius:1rem}.rounded-lg{border-radius:var(--radius)}.rounded-md{border-radius:calc(var(--radius) - 2px)}.rounded-sm{border-radius:calc(var(--radius) - 4px)}.border{border-width:1px}.border-2{border-width:2px}.border-b{border-bottom-width:1px}.border-l{border-left-width:1px}.border-t{border-top-width:1px}.border-dashed{border-style:dashed}.border-border{border-color:hsl(var(--border))}.border-border\/40{border-color:hsl(var(--border)/.4)}.border-destructive{border-color:hsl(var(--destructive))}.border-gray-300{--tw-border-opacity:1;border-color:rgb(209 213 219/var(--tw-border-opacity,1))}.border-green-500{--tw-border-opacity:1;border-color:rgb(34 197 94/var(--tw-border-opacity,1))}.border-primary{border-color:hsl(var(--primary))}.border-transparent{border-color:transparent}.border-yellow-500{--tw-border-opacity:1;border-color:rgb(234 179 8/var(--tw-border-opacity,1))}.bg-accent{background-color:hsl(var(--accent))}.bg-background{background-color:hsl(var(--background))}.bg-background\/30{background-color:hsl(var(--background)/.3)}.bg-background\/80{background-color:hsl(var(--background)/.8)}.bg-background\/95{background-color:hsl(var(--background)/.95)}.bg-border{background-color:hsl(var(--border))}.bg-card{background-color:hsl(var(--card))}.bg-muted{background-color:hsl(var(--muted))}.bg-muted\/40{background-color:hsl(var(--muted)/.4)}.bg-muted\/50{background-color:hsl(var(--muted)/.5)}.bg-popover{background-color:hsl(var(--popover))}.bg-primary{background-color:hsl(var(--primary))}.bg-red-100{--tw-bg-opacity:1;background-color:rgb(254 226 226/var(--tw-bg-opacity,1))}.object-contain{-o-object-fit:contain;object-fit:contain}.p-0{padding:0}.p-1{padding:.25rem}.p-1\.5{padding:.375rem}.p-2{padding:.5rem}.p-3{padding:.75rem}.p-4{padding:1rem}.p-6{padding:1.5rem}.px-1{padding-left:.25rem;padding-right:.25rem}.px-1\.5{padding-left:.375rem;padding-right:.375rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.py-0\.5{padding-top:.125rem;padding-bottom:.125rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-10{padding-top:2.5rem;padding-bottom:2.5rem}.py-16{padding-top:4rem;padding-bottom:4rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-2\.5{padding-top:.625rem;padding-bottom:.625rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-6{padding-top:1.5rem;padding-bottom:1.5rem}.py-8{padding-top:2rem;padding-bottom:2rem}.pb-2{padding-bottom:.5rem}.pb-4{padding-bottom:1rem}.pb-8{padding-bottom:2rem}.pl-2{padding-left:.5rem}.pl-3{padding-left:.75rem}.pr-2{padding-right:.5rem}.pt-2{padding-top:.5rem}.pt-4{padding-top:1rem}.pt-6{padding-top:1.5rem}.pt-8{padding-top:2rem}.text-left{text-align:left}.text-center{text-align:center}.text-right{text-align:right}.font-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace}.font-sans{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji}.text-2xl{font-size:1.5rem;line-height:2rem}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-6xl{font-size:3.75rem;line-height:1}.text-base{font-size:1rem;line-height:1.5rem}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-normal{font-weight:400}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.capitalize{text-transform:capitalize}.italic{font-style:italic}.tabular-nums{--tw-numeric-spacing:tabular-nums;font-variant-numeric:var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction)}.leading-\[1\.1\]{line-height:1.1}.leading-none{line-height:1}.leading-normal{line-height:1.5}.tracking-tight{letter-spacing:-.025em}.tracking-wider{letter-spacing:.05em}.text-accent-foreground{color:hsl(var(--accent-foreground))}.text-current{color:currentColor}.text-destructive{color:hsl(var(--destructive))}.text-foreground{color:hsl(var(--foreground))}.text-foreground\/60{color:hsl(var(--foreground)/.6)}.text-foreground\/70{color:hsl(var(--foreground)/.7)}.text-foreground\/80{color:hsl(var(--foreground)/.8)}.text-foreground\/90{color:hsl(var(--foreground)/.9)}.text-gray-300{--tw-text-opacity:1;color:rgb(209 213 219/var(--tw-text-opacity,1))}.text-gray-400{--tw-text-opacity:1;color:rgb(156 163 175/var(--tw-text-opacity,1))}.text-gray-500{--tw-text-opacity:1;color:rgb(107 114 128/var(--tw-text-opacity,1))}.text-gray-700{--tw-text-opacity:1;color:rgb(55 65 81/var(--tw-text-opacity,1))}.text-gray-800{--tw-text-opacity:1;color:rgb(31 41 55/var(--tw-text-opacity,1))}.text-gray-900{--tw-text-opacity:1;color:rgb(17 24 39/var(--tw-text-opacity,1))}.text-green-600{--tw-text-opacity:1;color:rgb(22 163 74/var(--tw-text-opacity,1))}.text-green-700{--tw-text-opacity:1;color:rgb(21 128 61/var(--tw-text-opacity,1))}.text-muted{color:hsl(var(--muted))}.text-muted-foreground{color:hsl(var(--muted-foreground))}.text-muted-foreground\/30{color:hsl(var(--muted-foreground)/.3)}.text-muted-foreground\/50{color:hsl(var(--muted-foreground)/.5)}.text-popover-foreground{color:hsl(var(--popover-foreground))}.text-primary{color:hsl(var(--primary))}.text-primary-foreground{color:hsl(var(--primary-foreground))}.text-red-500{--tw-text-opacity:1;color:rgb(239 68 68/var(--tw-text-opacity,1))}.text-red-600{--tw-text-opacity:1;color:rgb(220 38 38/var(--tw-text-opacity,1))}.text-red-700{--tw-text-opacity:1;color:rgb(185 28 28/var(--tw-text-opacity,1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.text-yellow-500{--tw-text-opacity:1;color:rgb(234 179 8/var(--tw-text-opacity,1))}.text-yellow-600{--tw-text-opacity:1;color:rgb(202 138 4/var(--tw-text-opacity,1))}.text-yellow-700{--tw-text-opacity:1;color:rgb(161 98 7/var(--tw-text-opacity,1))}.antialiased{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}.opacity-0{opacity:0}.opacity-100{opacity:1}.opacity-25{opacity:.25}.opacity-50{opacity:.5}.opacity-70{opacity:.7}.opacity-75{opacity:.75}.shadow-lg{--tw-shadow:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color),0 4px 6px -4px var(--tw-shadow-color)}.shadow-lg,.shadow-sm{box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-sm{--tw-shadow:0 1px 2px 0 rgba(0,0,0,.05);--tw-shadow-colored:0 1px 2px 0 var(--tw-shadow-color)}.ring{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color)}.ring,.ring-1{box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}.ring-1{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color)}.ring-2{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}.ring-border\/40{--tw-ring-color:hsl(var(--border)/0.4)}.ring-primary{--tw-ring-color:hsl(var(--primary))}.ring-ring{--tw-ring-color:hsl(var(--ring))}.ring-offset-background{--tw-ring-offset-color:hsl(var(--background))}.grayscale-\[20\%\]{--tw-grayscale:grayscale(20%)}.filter,.grayscale-\[20\%\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.backdrop-blur{--tw-backdrop-blur:blur(8px)}.backdrop-blur,.backdrop-blur-sm{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.backdrop-blur-sm{--tw-backdrop-blur:blur(4px)}.backdrop-filter{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-colors{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-opacity{transition-property:opacity;transition-timing-function:cubic-bezier(.4,0,.2,1)}.duration-150,.transition-opacity{transition-duration:.15s}.duration-200{transition-duration:.2s}.duration-300{transition-duration:.3s}.ease-in{transition-timing-function:cubic-bezier(.4,0,1,1)}.ease-out{transition-timing-function:cubic-bezier(0,0,.2,1)}.flatpickr-calendar{border-radius:calc(var(--radius) - 2px);border-width:1px;border-color:hsl(var(--border));background-color:hsl(var(--popover));color:hsl(var(--popover-foreground));--tw-shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -2px rgba(0,0,0,.1);--tw-shadow-colored:0 4px 6px -1px var(--tw-shadow-color),0 2px 4px -2px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow);width:auto;min-width:300px;font-family:inherit;font-size:.875rem;padding:.5rem}.flatpickr-months{padding:.25rem .5rem}.flatpickr-months .flatpickr-month{height:2.25rem;fill:hsl(var(--foreground));color:hsl(var(--foreground))}.flatpickr-current-month .flatpickr-monthDropdown-months,.flatpickr-current-month input.cur-year{font-weight:600;color:hsl(var(--foreground))}.flatpickr-months .flatpickr-next-month,.flatpickr-months .flatpickr-prev-month{top:.125rem;display:flex;height:2.25rem;width:2.25rem;align-items:center;justify-content:center;border-radius:calc(var(--radius) - 2px);fill:hsl(var(--foreground)/.7);padding:0;color:hsl(var(--foreground)/.7)}.flatpickr-months .flatpickr-next-month:hover,.flatpickr-months .flatpickr-prev-month:hover{background-color:hsl(var(--accent))}.flatpickr-months .flatpickr-next-month,.flatpickr-months .flatpickr-prev-month{border:none;svg{height:1rem;width:1rem}&:hover{fill:hsl(var(--accent-foreground));color:hsl(var(--accent-foreground))}}.flatpickr-months .flatpickr-prev-month{left:.25rem}.flatpickr-months .flatpickr-next-month{right:.25rem}span.flatpickr-weekday{font-size:.75rem;font-weight:500;text-transform:uppercase;color:hsl(var(--muted-foreground));letter-spacing:.05em}.flatpickr-weekdays{height:2.25rem;margin-bottom:.25rem}.dayContainer{padding:0}.flatpickr-day{margin:1px;display:flex;height:2.25rem;width:2.25rem;max-width:100%;align-items:center;justify-content:center;border-radius:calc(var(--radius) - 2px);border-width:1px;border-color:transparent;font-weight:400;line-height:2.25rem;color:hsl(var(--foreground));transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.1s}.flatpickr-day.today{border-color:hsl(var(--border))}.flatpickr-day.nextMonthDay,.flatpickr-day.prevMonthDay{border-color:transparent;font-weight:300;color:hsl(var(--muted-foreground)/.4)}.flatpickr-day.disabled,.flatpickr-day.disabled:hover{cursor:not-allowed;background-color:transparent;color:hsl(var(--muted-foreground)/.3)}.flatpickr-day:focus,.flatpickr-day:hover{border-color:hsl(var(--accent));background-color:hsl(var(--accent));color:hsl(var(--accent-foreground));outline:2px solid transparent;outline-offset:2px}.flatpickr-day.endRange,.flatpickr-day.endRange:focus,.flatpickr-day.endRange:hover,.flatpickr-day.selected,.flatpickr-day.selected:focus,.flatpickr-day.selected:hover,.flatpickr-day.startRange,.flatpickr-day.startRange:focus,.flatpickr-day.startRange:hover{border-color:hsl(var(--primary));background-color:hsl(var(--primary));color:hsl(var(--primary-foreground))}.flatpickr-day.inRange{border-radius:0;border-color:transparent;background-color:hsl(var(--primary)/.1);color:hsl(var(--primary));--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.flatpickr-day.startRange{border-top-right-radius:0;border-bottom-right-radius:0}.flatpickr-day.endRange{border-top-left-radius:0;border-bottom-left-radius:0}.flatpickr-time{display:flex;height:2.5rem;max-height:2.5rem;align-items:center;justify-content:center;gap:.25rem;border-top-width:1px;border-color:hsl(var(--border));padding:0;font-size:.875rem;line-height:1.25rem;background:transparent}.flatpickr-time .flatpickr-am-pm,.flatpickr-time input{display:flex;height:1.75rem;align-items:center;justify-content:center;border-radius:.25rem;background-color:transparent;text-align:center;font-weight:500;color:hsl(var(--foreground));transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.1s}.flatpickr-time .flatpickr-am-pm:hover,.flatpickr-time input:hover{background-color:hsl(var(--accent))}.flatpickr-time .flatpickr-am-pm,.flatpickr-time input{box-shadow:none;border:none;flex-grow:0;padding:0 .25rem}.flatpickr-time input{width:2.5em}.flatpickr-time .flatpickr-am-pm{width:2.8em}.flatpickr-time .flatpickr-am-pm:focus,.flatpickr-time input:focus{background-color:hsl(var(--accent))}.flatpickr-time .separator{margin-top:.125rem;color:hsl(var(--muted-foreground))}input.numInput{text-align:center}.flatpickr-day:focus,.flatpickr-time input:focus{box-shadow:none}.vendor-logo{max-width:75px;max-height:30px;-o-object-fit:contain;object-fit:contain}[x-cloak]{display:none!important}.hover\:border-foreground\/10:hover{border-color:hsl(var(--foreground)/.1)}.hover\:bg-accent:hover{background-color:hsl(var(--accent))}.hover\:bg-muted\/30:hover{background-color:hsl(var(--muted)/.3)}.hover\:bg-muted\/50:hover{background-color:hsl(var(--muted)/.5)}.hover\:text-accent-foreground:hover{color:hsl(var(--accent-foreground))}.hover\:text-foreground:hover{color:hsl(var(--foreground))}.hover\:text-foreground\/80:hover{color:hsl(var(--foreground)/.8)}.hover\:opacity-100:hover{opacity:1}.hover\:grayscale-0:hover{--tw-grayscale:grayscale(0);filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.focus\:ring-2:focus{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}.focus\:ring-inset:focus{--tw-ring-inset:inset}.focus\:ring-primary:focus{--tw-ring-color:hsl(var(--primary))}.focus\:ring-ring:focus{--tw-ring-color:hsl(var(--ring))}.focus\:ring-offset-2:focus{--tw-ring-offset-width:2px}.focus-visible\:outline-none:focus-visible{outline:2px solid transparent;outline-offset:2px}.focus-visible\:ring-2:focus-visible{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}.focus-visible\:ring-ring:focus-visible{--tw-ring-color:hsl(var(--ring))}.focus-visible\:ring-offset-0:focus-visible{--tw-ring-offset-width:0px}.focus-visible\:ring-offset-2:focus-visible{--tw-ring-offset-width:2px}.disabled\:pointer-events-none:disabled{pointer-events:none}.disabled\:cursor-not-allowed:disabled{cursor:not-allowed}.disabled\:opacity-50:disabled{opacity:.5}.peer:checked~.peer-checked\:border-primary{border-color:hsl(var(--primary))}.peer:checked~.peer-checked\:bg-accent{background-color:hsl(var(--accent))}.peer:checked~.peer-checked\:bg-primary\/10{background-color:hsl(var(--primary)/.1)}.peer:checked~.peer-checked\:text-accent-foreground{color:hsl(var(--accent-foreground))}.peer:checked~.peer-checked\:text-primary{color:hsl(var(--primary))}.peer:checked~.peer-checked\:ring-1{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}.peer:checked~.peer-checked\:ring-primary{--tw-ring-color:hsl(var(--primary))}@supports ((-webkit-backdrop-filter:var(--tw )) or (backdrop-filter:var(--tw ))){.supports-\[backdrop-filter\]\:bg-background\/60{background-color:hsl(var(--background)/.6)}}.dark\:-rotate-90:is(.dark *){--tw-rotate:-90deg;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.dark\:rotate-0:is(.dark *){--tw-rotate:0deg;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.dark\:scale-0:is(.dark *){--tw-scale-x:0;--tw-scale-y:0;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.dark\:scale-100:is(.dark *){--tw-scale-x:1;--tw-scale-y:1;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.dark\:border-destructive\/50:is(.dark *){border-color:hsl(var(--destructive)/.5)}.dark\:border-gray-600:is(.dark *){--tw-border-opacity:1;border-color:rgb(75 85 99/var(--tw-border-opacity,1))}.dark\:border-green-600:is(.dark *){--tw-border-opacity:1;border-color:rgb(22 163 74/var(--tw-border-opacity,1))}.dark\:border-sky-400:is(.dark *){--tw-border-opacity:1;border-color:rgb(56 189 248/var(--tw-border-opacity,1))}.dark\:border-yellow-600:is(.dark *){--tw-border-opacity:1;border-color:rgb(202 138 4/var(--tw-border-opacity,1))}.dark\:bg-red-200:is(.dark *){--tw-bg-opacity:1;background-color:rgb(254 202 202/var(--tw-bg-opacity,1))}.dark\:text-gray-300:is(.dark *){--tw-text-opacity:1;color:rgb(209 213 219/var(--tw-text-opacity,1))}.dark\:text-gray-400:is(.dark *){--tw-text-opacity:1;color:rgb(156 163 175/var(--tw-text-opacity,1))}.dark\:text-gray-500:is(.dark *){--tw-text-opacity:1;color:rgb(107 114 128/var(--tw-text-opacity,1))}.dark\:text-gray-600:is(.dark *){--tw-text-opacity:1;color:rgb(75 85 99/var(--tw-text-opacity,1))}.dark\:text-green-300:is(.dark *){--tw-text-opacity:1;color:rgb(134 239 172/var(--tw-text-opacity,1))}.dark\:text-green-400:is(.dark *){--tw-text-opacity:1;color:rgb(74 222 128/var(--tw-text-opacity,1))}.dark\:text-red-400:is(.dark *){--tw-text-opacity:1;color:rgb(248 113 113/var(--tw-text-opacity,1))}.dark\:text-red-800:is(.dark *){--tw-text-opacity:1;color:rgb(153 27 27/var(--tw-text-opacity,1))}.dark\:text-white:is(.dark *){--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.dark\:text-yellow-300:is(.dark *){--tw-text-opacity:1;color:rgb(253 224 71/var(--tw-text-opacity,1))}.dark\:text-yellow-400:is(.dark *){--tw-text-opacity:1;color:rgb(250 204 21/var(--tw-text-opacity,1))}.dark\:ring-sky-400:is(.dark *){--tw-ring-opacity:1;--tw-ring-color:rgb(56 189 248/var(--tw-ring-opacity,1))}.peer:checked~.dark\:peer-checked\:border-sky-400:is(.dark *){--tw-border-opacity:1;border-color:rgb(56 189 248/var(--tw-border-opacity,1))}.peer:checked~.dark\:peer-checked\:bg-accent:is(.dark *){background-color:hsl(var(--accent))}.peer:checked~.dark\:peer-checked\:bg-sky-900\/50:is(.dark *){background-color:rgba(12,74,110,.5)}.peer:checked~.dark\:peer-checked\:text-sky-300:is(.dark *){--tw-text-opacity:1;color:rgb(125 211 252/var(--tw-text-opacity,1))}.peer:checked~.dark\:peer-checked\:ring-sky-400:is(.dark *){--tw-ring-opacity:1;--tw-ring-color:rgb(56 189 248/var(--tw-ring-opacity,1))}@media (min-width:640px){.sm\:h-80{height:20rem}.sm\:basis-32{flex-basis:8rem}.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.sm\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.sm\:flex-nowrap{flex-wrap:nowrap}.sm\:text-3xl{font-size:1.875rem;line-height:2.25rem}.sm\:text-5xl{font-size:3rem;line-height:1}.sm\:text-lg{font-size:1.125rem;line-height:1.75rem}.sm\:text-xl{font-size:1.25rem}.sm\:leading-7,.sm\:text-xl{line-height:1.75rem}.sm\:leading-8{line-height:2rem}}@media (min-width:768px){.md\:col-span-1{grid-column:span 1/span 1}.md\:col-span-2{grid-column:span 2/span 2}.md\:col-span-3{grid-column:span 3/span 3}.md\:flex{display:flex}.md\:hidden{display:none}.md\:h-10{height:2.5rem}.md\:h-96{height:24rem}.md\:min-h-\[450px\]{min-height:450px}.md\:w-10{width:2.5rem}.md\:w-3\/4{width:75%}.md\:max-w-\[64rem\]{max-width:64rem}.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.md\:space-x-4>:not([hidden])~:not([hidden]){--tw-space-x-reverse:0;margin-right:calc(1rem*var(--tw-space-x-reverse));margin-left:calc(1rem*(1 - var(--tw-space-x-reverse)))}.md\:py-12{padding-top:3rem}.md\:pb-12,.md\:py-12{padding-bottom:3rem}.md\:pt-10{padding-top:2.5rem}.md\:text-4xl{font-size:2.25rem;line-height:2.5rem}.md\:text-6xl{font-size:3.75rem;line-height:1}}@media (min-width:1024px){.lg\:col-span-1{grid-column:span 1/span 1}.lg\:col-span-2{grid-column:span 2/span 2}.lg\:w-1\/2{width:50%}.lg\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.lg\:py-16{padding-top:4rem;padding-bottom:4rem}.lg\:py-24{padding-top:6rem;padding-bottom:6rem}.lg\:text-7xl{font-size:4.5rem;line-height:1}}.\[\&\>svg\+div\]\:translate-y-\[-3px\]>svg+div{--tw-translate-y:-3px;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.\[\&\>svg\]\:absolute>svg{position:absolute}.\[\&\>svg\]\:left-4>svg{left:1rem}.\[\&\>svg\]\:top-4>svg{top:1rem}.\[\&\>svg\]\:text-destructive>svg{color:hsl(var(--destructive))}.\[\&\>svg\]\:text-foreground\/80>svg{color:hsl(var(--foreground)/.8)}.\[\&\>svg\]\:text-green-600>svg{--tw-text-opacity:1;color:rgb(22 163 74/var(--tw-text-opacity,1))}.\[\&\>svg\]\:text-yellow-600>svg{--tw-text-opacity:1;color:rgb(202 138 4/var(--tw-text-opacity,1))}.\[\&\>svg\~\*\]\:pl-7>svg~*{padding-left:1.75rem}.\[\&_p\]\:leading-relaxed p{line-height:1.625}// static/js/chart_themes.js
+// Content from your provided chart_themes.js
+/**
+ * chart_themes.js
+ * Provides Chart.js configuration options styled to match the Shadcn UI aesthetic,
+ * dynamically reading CSS variables for theme colors (best effort).
+ */
+
+/**
+ * Safely gets a computed CSS variable value as an HSL string.
+ * @param {string} varName -- The CSS variable name (e.g., '--foreground')
+ * @param {string} fallbackColor - A fallback HSL color string if the variable is not found.
+ * @returns {string} The HSL color string (e.g., 'hsl(240 10% 3.9%)') or fallback.
+ */
+function getCssVariableValue(varName, fallbackColor) {
+    try {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(varName)?.trim();
+        if (value) {
+            // Assuming the value is in the format 'H S% L%' or 'H S L'
+            // Convert space-separated HSL to hsl(H, S%, L%) format if needed,
+            // although Chart.js v3+ often handles space-separated HSL.
+            // For maximum compatibility, let's format it explicitly.
+            const parts = value.split(' ');
+            if (parts.length === 3) {
+                return `hsl(${parts[0]}, ${parts[1].endsWith('%') ? parts[1] : parts[1] + '%'}, ${parts[2].endsWith('%') ? parts[2] : parts[2] + '%'})`;
+            }
+            return value; // Return as is if not HSL parts
+        }
+    } catch (e) {
+        console.warn(`[ChartTheme] Error reading CSS variable ${varName}:`, e);
+    }
+    console.warn(`[ChartTheme] CSS variable ${varName} not found, using fallback ${fallbackColor}.`);
+    return fallbackColor;
+}
+
+/**
+ * Generates a Chart.js options object themed like Shadcn UI.
+ * Dynamically reads CSS variables for colors.
+ * @param {boolean} [isDarkModeOverride] - Optional: Force dark/light mode.
+ * @returns {object} A Chart.js options object.
+ */
+function getChartJsShadcnOptions(isDarkModeOverride = null) {
+    const isDarkMode = isDarkModeOverride ?? document.documentElement.classList.contains('dark');
+    console.log(`[ChartTheme] Generating options. isDarkMode detected: ${isDarkMode}`);
+
+    // Define fallbacks based on standard Shadcn HSL values
+    const fallbackGrid = isDarkMode ? 'hsl(240, 3.7%, 15.9%)' : 'hsl(240, 5.9%, 90%)';      // --border
+    const fallbackTick = isDarkMode ? 'hsl(240, 5%, 64.9%)' : 'hsl(240, 3.8%, 46.1%)';      // --muted-foreground
+    const fallbackTitle = isDarkMode ? 'hsl(0, 0%, 98%)' : 'hsl(240, 10%, 3.9%)';           // --foreground
+    const fallbackTooltipBg = isDarkMode ? 'hsl(240, 10%, 3.9%)' : 'hsl(0, 0%, 100%)';       // --popover / --card
+    const fallbackTooltipFore = isDarkMode ? 'hsl(0, 0%, 98%)' : 'hsl(240, 10%, 3.9%)';    // --popover-foreground / --card-foreground
+
+    const gridColor = getCssVariableValue('--border', fallbackGrid);
+    const tickColor = getCssVariableValue('--muted-foreground', fallbackTick);
+    const titleColor = getCssVariableValue('--foreground', fallbackTitle);
+    const tooltipBgColor = getCssVariableValue('--popover', fallbackTooltipBg); // Or --card if preferred
+    const tooltipTitleColor = getCssVariableValue('--popover-foreground', fallbackTooltipFore);
+    const tooltipBodyColor = getCssVariableValue('--popover-foreground', fallbackTooltipFore);
+
+    console.log(`[ChartTheme] Colors - Grid: ${gridColor}, Tick: ${tickColor}, Title: ${titleColor}, TooltipBg: ${tooltipBgColor}`);
+
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { // Smoother interaction
+            mode: 'index', // Show tooltips for all datasets at that index
+            intersect: false,
+        },
+        plugins: {
+            title: { display: false }, // Keep titles outside chart generally
+            tooltip: {
+                // mode: 'index', // Set in interaction now
+                // intersect: false, // Set in interaction now
+                backgroundColor: tooltipBgColor,
+                titleColor: tooltipTitleColor,
+                bodyColor: tooltipBodyColor,
+                borderColor: gridColor,
+                borderWidth: 1,
+                titleFont: { weight: '500', family: 'Inter, sans-serif', size: 12 }, // Adjusted weight
+                bodyFont: { family: 'Inter, sans-serif', size: 11 },
+                padding: 8, // Slightly less padding
+                boxPadding: 4,
+                cornerRadius: 4, // Matches default Shadcn radius 'sm'
+                usePointStyle: true, // Use point style in tooltip legend
+                callbacks: {
+                    // Callback to format the tooltip label more informatively
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        let value = context.parsed.y;
+
+                        // Try to extract meaningful base label if formatted by utils.py
+                        // E.g., "KPI_Name (Metric) - Vendor" -> "KPI_Name (Metric)"
+                        let baseLabelMatch = label.match(/^(.*?)\s*(-.*Vendor.*)?$/);
+                        let baseLabel = baseLabelMatch ? baseLabelMatch[1].trim() : label;
+                        // Attempt to extract vendor if not already displayed (or customize as needed)
+                        let vendorPart = label.includes('- V') ? '' : (context.dataset.vendor_name ? ` - ${context.dataset.vendor_name}` : '');
+
+                        let displayValue = 'N/A';
+                        if (value !== null && typeof value !== 'undefined' && !isNaN(value)) {
+                             // Formatting based on inferred type (or dataset property)
+                             const isPercentage = context.dataset?.metric?.includes('%') || baseLabel.includes('%');
+                             if (isPercentage) {
+                                 displayValue = value.toFixed(2) + '%';
+                             } else if (Math.abs(value) >= 1000) {
+                                // Simple large number formatting (e.g., 1.2k, 1.5M)
+                                 displayValue = Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+                             } else {
+                                displayValue = value.toFixed(2); // Default to 2 decimal places
+                             }
+                        }
+                        return `${baseLabel}${vendorPart}: ${displayValue}`;
+                    },
+                    // Optional: Title callback if you want to format the date/time axis value
+                    // title: function(tooltipItems) {
+                    //     // Example: return tooltipItems[0].label; // Adjust formatting if needed
+                    //     return tooltipItems[0].label;
+                    // }
+                }
+            },
+            legend: {
+                display: true,
+                position: 'bottom',
+                align: 'center',
+                labels: {
+                    boxWidth: 8, // Smaller box
+                    boxHeight: 8, // Match width
+                    padding: 15,
+                    font: { family: 'Inter, sans-serif', size: 11 },
+                    color: tickColor, // Use muted color for legend text
+                    usePointStyle: true, // Use point style in legend
+                }
+            }
+        },
+        elements: {
+            point: {
+                radius: 0, // Hide points by default
+                hoverRadius: 4,
+                hitRadius: 10,
+                pointStyle: 'circle',
+                backgroundColor: 'white', // Ensure hover point is visible
+                borderWidth: 1 // Border on hover
+            },
+            line: {
+                borderWidth: 2, // Slightly thicker lines
+                tension: 0.3, // Smoother curves
+                spanGaps: true // Connect points across null values
+            }
+        },
+        layout: {
+            padding: { top: 5, left: 0, right: 5, bottom: 0 }
+        },
+        scales: {
+            x: {
+                grid: {
+                    display: false, // Hide vertical grid lines for cleaner look
+                    // color: gridColor,
+                    // drawTicks: false,
+                    // drawBorder: false,
+                },
+                border: { // Show X axis line subtlely
+                    display: true,
+                    color: gridColor
+                },
+                ticks: {
+                    maxRotation: 0, // Keep horizontal
+                    minRotation: 0,
+                    autoSkip: true,
+                    maxTicksLimit: 10, // Limit number of ticks
+                    font: { family: 'Inter, sans-serif', size: 10 },
+                    color: tickColor,
+                    padding: 10 // More padding from axis
+                }
+            },
+            y: { // Default Y axis (can be overridden)
+                border: { // Hide Y axis line itself by default, grid is enough
+                    display: false
+                },
+                grid: {
+                    color: gridColor, // Main grid color
+                    drawTicks: false, // Don't draw ticks on the grid lines
+                    drawBorder: false, // Ensure axis line isn't drawn *by grid*
+                },
+                beginAtZero: false, // Let Chart.js decide based on data
+                grace: '5%', // Add 5% padding above/below data range
+                ticks: {
+                    font: { family: 'Inter, sans-serif', size: 10 },
+                    color: tickColor,
+                    padding: 10, // More padding
+                    precision: 2 // Default precision
+                    // Callback for smarter formatting (e.g., percentages, large numbers)
+                    // callback: function(value, index, ticks) {
+                    //      // Example: Add % if axis ID indicates it
+                    //      if (this.axis.id.includes('percent')) return value.toFixed(1) + '%';
+                    //      return value.toLocaleString(); // Basic localization
+                    // }
+                }
+                // Y Axis title configuration example (add if needed, generally better outside chart)
+                // title: {
+                //    display: true,
+                //    text: 'Value',
+                //    font: { size: 11, weight: '500', family: 'Inter, sans-serif'},
+                //    color: tickColor, // Use tick color for less emphasis
+                //    padding: { top: 0, bottom: 5 }
+                // }
+            }
+        }
+    };
+}
+
+
+/**
+ * Provides a curated color palette inspired by Tailwind/Shadcn defaults.
+ * Designed for better visual harmony than the default Chart.js colors.
+ * @returns {string[]} An array of HSL color strings.
+ */
+function getShadcnChartColors() {
+    // Colors carefully chosen to work well on both light/dark Shadcn backgrounds
+    // Using HSL values similar to Tailwind defaults (e.g., blue-500, sky-500, red-500, etc.)
+    return [
+        'hsl(221, 83%, 53%)',   // Blue-600 (Primary-ish)
+        'hsl(21, 90%, 57%)',   // Orange-600
+        'hsl(134, 46.20%, 45.90%)',  // Green-600
+        'hsl(347, 87%, 56%)',  // Red-600
+        'hsl(262, 82%, 58%)',  // Violet-600
+        'hsl(52, 96%, 53%)',   // Yellow-500
+        'hsl(199, 98%, 48%)',  // Sky-500
+        'hsl(320, 78%, 57%)',  // Pink-600
+        'hsl(217, 33%, 50%)',  // Slate-600 (Muted)
+        'hsl(84, 81%, 47%)',   // Lime-600
+        'hsl(180, 86%, 41%)',  // Teal-600
+        'hsl(281, 79%, 51%)'   // Purple-700
+    ];
+}
+
+console.log("[ChartTheme] Shadcn chart theme helpers loaded.");document.addEventListener('DOMContentLoaded', function() {
+    console.log("RiskNet AI App - Main JS Loaded");
+
+    // Model choice related JS removed as model selection is now backend only.
+    // const modelChoiceSelect = document.getElementById('model_choice');
+    // const mindsporeInfoBlock = document.querySelector('[data-mindspore-info]');
+
+    // function toggleMindsporeInfo() {
+    //     if (modelChoiceSelect && mindsporeInfoBlock) {
+    //         if (modelChoiceSelect.value === 'mindspore_mlp') {
+    //             mindsporeInfoBlock.classList.remove('hidden');
+    //         } else {
+    //             mindsporeInfoBlock.classList.add('hidden');
+    //         }
+    //     }
+    // }
+
+    // if (modelChoiceSelect) {
+    //     modelChoiceSelect.addEventListener('change', toggleMindsporeInfo);
+    //     toggleMindsporeInfo(); // Initial check
+    // }
+
+    // Add any other general JS logic for the app here if needed.
+    // For example, dynamic form interactions that are not model-specific.
+});// tailwind.config.js
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    './templates/**/*.html',   // Scans all .html files in the templates folder and subfolders
+    './static/js/**/*.js',     // Scans all .js files in static/js (if you add/remove classes with JS)
+    './forms.py',              // If you dynamically add classes in Python forms (less common for direct Tailwind classes)
+    // Add any other paths where you use Tailwind classes
+  ],
+  darkMode: 'class', // To enable dark mode based on a class on the <html> element
+  theme: {
+    extend: {
+      container: { // Optional: If you've customized the container
+        center: true,
+        padding: {
+          DEFAULT: '1rem',
+          sm: '2rem',
+          lg: '4rem',
+          xl: '5rem',
+        },
+      },
+      colors: { // Your theme's custom colors from shadcn/ui (example)
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+      },
+      borderRadius: { // Example border radius from shadcn/ui
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+      // ... any other theme extensions
+    },
+  },
+  plugins: [
+    require('@tailwindcss/forms'), // If you are using this plugin
+    // require('@tailwindcss/typography'), // If you are using this for `prose`
+  ],
+}{% extends "layout.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="text-center mb-10">
+        <i data-lucide="clipboard-edit" class="mx-auto h-12 w-12 text-primary mb-4"></i> {# Changed icon #}
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">Client Auto Risk Assessment</h1>
+        <p class="mt-4 text-lg leading-relaxed text-muted-foreground max-w-2xl mx-auto">
+            Provide client and vehicle details to receive an AI-powered risk assessment for auto insurance.
+        </p>
+    </div>
+
+    <form method="POST" novalidate class="space-y-8">
+        {{ form.hidden_tag() }}
+
+        <!-- Client Information Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="user-round" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Client Information</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6"> {# Added padding to card-content #}
+                <div>
+                    {{ form.sexe.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.sexe(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.sexe.errors else "")) }}
+                    {% if form.sexe.errors %}{% for error in form.sexe.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.age_client.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.age_client(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.age_client.errors else ""), placeholder="e.g., 35") }}
+                    {% if form.age_client.errors %}{% for error in form.age_client.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.civilite.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.civilite(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.civilite.errors else "")) }}
+                    {% if form.civilite.errors %}{% for error in form.civilite.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.delegation.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.delegation(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.delegation.errors else "")) }}
+                    {% if form.delegation.errors %}{% for error in form.delegation.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2">
+                    {{ form.activite.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.activite(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.activite.errors else "")) }}
+                    {% if form.activite.errors %}{% for error in form.activite.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle Information Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="car-front" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Vehicle Information</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6">
+                <div>
+                    {{ form.marque.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.marque(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.marque.errors else "")) }}
+                    {% if form.marque.errors %}{% for error in form.marque.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.carrosserie.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.carrosserie(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.carrosserie.errors else "")) }}
+                    {% if form.carrosserie.errors %}{% for error in form.carrosserie.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.usage.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.usage(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.usage.errors else "")) }}
+                    {% if form.usage.errors %}{% for error in form.usage.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.classe.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.classe(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.classe.errors else "")) }}
+                    {% if form.classe.errors %}{% for error in form.classe.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2"> {# Making fuel type full width for balance or keep 2-col #}
+                    {{ form.energie.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.energie(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.energie.errors else "")) }}
+                    {% if form.energie.errors %}{% for error in form.energie.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Technical & Financial Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="gauge" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Vehicle Technical & Financial Details</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6">
+                <div>
+                    {{ form.anciennete.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.anciennete(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.anciennete.errors else ""), placeholder="e.g., 5") }}
+                    {% if form.anciennete.errors %}{% for error in form.anciennete.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.age_objet_assuree.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.age_objet_assuree(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.age_objet_assuree.errors else ""), placeholder="e.g., 3") }}
+                    {% if form.age_objet_assuree.errors %}{% for error in form.age_objet_assuree.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.puissance.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.puissance(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.puissance.errors else ""), placeholder="e.g., 7 (Fiscal HP)") }}
+                    {% if form.puissance.errors %}{% for error in form.puissance.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.place.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.place(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.place.errors else ""), placeholder="e.g., 5") }}
+                    {% if form.place.errors %}{% for error in form.place.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.charge_utile.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.charge_utile(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.charge_utile.errors else ""), placeholder="e.g., 0.5 (if commercial)") }}
+                    {% if form.charge_utile.errors %}{% for error in form.charge_utile.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.valeur_venale.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.valeur_venale(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.valeur_venale.errors else ""), placeholder="e.g., 35000") }}
+                    {% if form.valeur_venale.errors %}{% for error in form.valeur_venale.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2">
+                    {{ form.valeur_neuve.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.valeur_neuve(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.valeur_neuve.errors else ""), placeholder="e.g., 70000") }}
+                    {% if form.valeur_neuve.errors %}{% for error in form.valeur_neuve.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Choice Card removed -->
+
+        <div class="flex justify-center pt-6">
+            {{ form.submit(class="btn btn-primary btn-lg w-full md:w-auto md:px-12 text-base") }} {# Wider button on desktop #}
+        </div>
+    </form>
+</div>
+{% endblock %}{% extends "layout.html" %}
+{% block title %}{{ title_prefix }}{% endblock %} {# Simplified title #}
+
+{% block head %}
+{{ super() }}
+{# Chart.js scripts commented out as no charts are currently used here #}
+{# <script src="{{ url_for('static', filename='vendor/chartjs/chart.min.js') }}"></script> #}
+{# <script src="{{ url_for('static', filename='js/chart_themes.js') }}"></script> #}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="text-center mb-10">
+        <i data-lucide="file-check-2" class="mx-auto h-12 w-12 text-primary mb-4"></i>
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">Car Risk Assessment Results</h1>
+        <p class="mt-3 text-lg text-muted-foreground">
+            Analysis performed using our
+            <span class="font-semibold text-primary">
+                {{ model_used|replace('_', ' ')|replace('mlp', 'MLP')|title }} Engine
+                {% if model_used == 'xgboost' %}
+                     <span class="ml-1.5 inline-flex items-center rounded-full bg-green-100 dark:bg-green-700/30 px-2.5 py-1 text-xs font-semibold text-green-700 dark:text-green-300 border border-green-300 dark:border-green-600">
+                        <i data-lucide="trending-up" class="h-3.5 w-3.5 mr-1.5"></i>XGBoost
+                    </span>
+                {% endif %}
+                {# Removed elif for MindSpore and Random Forest as they are no longer options #}
+            </span>
+        </p>
+    </div>
+
+    <!-- Main Result Card -->
+    <div class="card mb-8 shadow-lg">
+        <div class="card-header items-center py-5 px-6 rounded-t-lg
+            {% if prediction == 1 %} bg-destructive/10 dark:bg-destructive/20 border-b-2 border-destructive/30 dark:border-destructive/40
+            {% else %} bg-green-600/10 dark:bg-green-700/20 border-b-2 border-green-600/30 dark:border-green-600/40 {% endif %}">
+            <div class="flex items-center">
+                {% if prediction == 1 %}
+                    <i data-lucide="alert-triangle" class="h-8 w-8 mr-3 text-destructive dark:text-red-400"></i>
+                {% else %}
+                    <i data-lucide="shield-check" class="h-8 w-8 mr-3 text-green-600 dark:text-green-400"></i> {# Changed icon #}
+                {% endif %}
+                <h3 class="card-title text-2xl font-semibold
+                    {% if prediction == 1 %} text-destructive dark:text-red-400
+                    {% else %} text-green-700 dark:text-green-400 {% endif %}">
+                    Prediction: <span class="font-bold">{{ "Risky Client" if prediction == 1 else "Not Risky Client" }}</span>
+                </h3>
+            </div>
+        </div>
+        <div class="card-content p-6 space-y-6">
+            <div>
+                <h4 class="text-sm font-medium text-muted-foreground mb-2">Risk Probability Distribution:</h4>
+                <div class="relative pt-1">
+                    <div class="overflow-hidden h-4 mb-2 text-xs flex rounded-full bg-muted/70 dark:bg-muted/40">
+                        <div style="width:{{ probability[0]*100 }}%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500 dark:bg-green-600 transition-all duration-500 ease-out" title="Not Risky: {{ "%.2f"|format(probability[0]*100) }}%"></div>
+                        <div style="width:{{ probability[1]*100 }}%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-red-500 dark:bg-red-600 transition-all duration-500 ease-out" title="Risky: {{ "%.2f"|format(probability[1]*100) }}%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs font-medium text-muted-foreground mt-1">
+                        <span class="text-green-600 dark:text-green-500">Not Risky: {{ "%.1f"|format(probability[0]*100) }}%</span>
+                        <span class="text-red-600 dark:text-red-500">Risky: {{ "%.1f"|format(probability[1]*100) }}%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-border/40 dark:border-border/20 pt-6">
+                <h4 class="text-sm font-medium text-muted-foreground mb-2 flex items-center">
+                    <i data-lucide="message-circle-heart" class="h-4 w-4 mr-2 text-primary"></i>AI-Generated Risk Insights (Mock LLM): {# Changed icon #}
+                </h4>
+                <div class="text-sm text-foreground p-4 bg-accent dark:bg-accent/50 rounded-md border border-border/70 dark:border-border/30 prose prose-sm dark:prose-invert max-w-none [&_strong]:text-primary dark:[&_strong]:text-sky-400">
+                    {{ llm_summary | safe }}
+                </div>
+            </div>
+
+            <div class="border-t border-border/40 dark:border-border/20 pt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                <div>
+                    <h4 class="text-sm font-medium text-muted-foreground mb-1 flex items-center"><i data-lucide="activity" class="h-4 w-4 mr-1.5"></i>Predictive Loss Rate (S/P):</h4>
+                    <p class="text-2xl font-semibold text-foreground tabular-nums">
+                        {{ "%.3f"|format(s_p_value) }}
+                    </p>
+                    <p class="text-xs text-muted-foreground">A conceptual metric indicating predicted loss ratio.</p>
+                </div>
+                <div>
+                    <h4 class="text-sm font-medium text-muted-foreground mb-1 flex items-center"><i data-lucide="landmark" class="h-4 w-4 mr-1.5"></i>Estimated Base Premium:</h4>
+                    <p class="text-2xl font-semibold text-foreground tabular-nums">
+                        {{ "%.2f"|format(recommended_premium) }} <span class="text-sm font-normal">DT</span>
+                    </p>
+                    <p class="text-xs text-muted-foreground">Illustrative and subject to final underwriting.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Summary Card -->
+    <div class="card">
+        <div class="card-header flex items-center space-x-3">
+            <i data-lucide="list-ordered" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+            <h3 class="card-title text-xl">Submitted Client & Vehicle Parameters</h3>
+        </div>
+        <div class="card-content p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+                {% for field_name, value in form_data_display.items() %}
+                    {% if field_name not in ['csrf_token', 'submit', 'model_choice'] %} {# model_choice should not be in form_data_display if removed from form #}
+                        {% set field = form[field_name] if form[field_name] else None %}
+                        <div class="flex justify-between py-2 border-b border-border/50 dark:border-border/20">
+                            <dt class="font-medium text-muted-foreground">{{ field.label.text if field and field.label else field_name|replace('_', ' ')|title }}:</dt>
+                            <dd class="text-foreground text-right truncate ml-2" title="{{value}}">{{ value }}</dd>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                 {# Removed explicit display of model_choice here as it's not a user input anymore #}
+            </dl>
+        </div>
+    </div>
+
+    <div class="text-center mt-10">
+        <a href="{{ url_for('car_assessment_route') }}" class="btn btn-outline btn-lg text-base">
+            <i data-lucide="arrow-left-circle" class="mr-2 h-5 w-5"></i> Back to Assessment Form {# Changed icon #}
+        </a>
+    </div>
+</div>
+{% endblock %}{% extends "layout.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container mx-auto py-16 px-4 text-center"> {# Increased py-12 to py-16 for more top/bottom space overall #}
+    <i data-lucide="shield-alert" class="mx-auto h-20 w-20 text-primary mb-6"></i>
+
+    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
+        Advanced AI for Car Insurance Risk Assessment
+    </h1>
+    <p class="mt-8 max-w-3xl mx-auto text-lg sm:text-xl leading-8 text-muted-foreground mb-12"> {# Increased mt-6 to mt-8 and added mb-12 #}
+        Welcome to insure AI. Leverage the power of artificial intelligence to
+        accurately assess car insurance risks, streamline underwriting, and make data-driven decisions.
+    </p>
+    <!---
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-x-8"> {# Increased mt-12 to mt-10 (adjust as needed after para mb), increased gap #}
+        <a href="{{ url_for('car_assessment_route') }}"
+           class="btn btn-lg w-full sm:w-auto text-base bg-green-600 hover:bg-green-700 text-white dark:bg-green-500 dark:hover:bg-green-600 dark:text-gray-900 px-8 py-3 rounded-md">
+           {# Replaced btn-primary with specific green classes #}
+           {# Added px-8 py-3 for a slightly larger button, and rounded-md #}
+           <i data-lucide="car" class="mr-2 h-5 w-5"></i>
+            Assess Car Risk Now
+        </a>
+        <a href="#platform-features"
+           class="btn btn-outline btn-lg w-full sm:w-auto text-base border-primary/50 hover:border-primary hover:bg-primary/5 text-primary px-8 py-3 rounded-md">
+           {# Adjusted outline button to use primary color for consistency if theme is changed #}
+           {# Added px-8 py-3 for a slightly larger button, and rounded-md #}
+           Learn More <i data-lucide="arrow-down-circle" class="ml-2 h-5 w-5"></i>
+        </a>
+    </div> -->
+
+    <div id="platform-features" class="mt-24 pt-20 border-t border-border/40"> {# Increased mt-20 to mt-24 and pt-16 to pt-20 #}
+        <h2 class="text-3xl font-semibold tracking-tight text-foreground mb-12">Platform Key Features</h2> {# Increased mb-10 to mb-12 #}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 text-left">
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="brain-circuit" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Sophisticated AI Engine</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Utilizes robust machine learning model, trained on extensive datasets, for high-accuracy risk predictions in the insurance sector.
+                </p>
+            </div>
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                 <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="zap" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Rapid & Efficient</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Get near real-time insights into client risk profiles for car insurance, significantly expediting your decision-making and operational efficiency.
+                </p>
+            </div>
+            <div class="card p-6 hover:shadow-lg transition-shadow duration-300">
+                 <div class="flex items-center mb-4">
+                    <div class="p-3 rounded-full bg-primary/10 text-primary mr-4">
+                        <i data-lucide="file-text" class="h-7 w-7"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-foreground">Clear & Actionable Insights</h3>
+                </div>
+                <p class="text-md text-muted-foreground">
+                    Receive clear risk predictions, probability scores, and concise summaries from our integrated LLM, aiding in comprehensive understanding for car insurance underwriting.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}<!DOCTYPE html>
+<html lang="en" suppressHydrationWarning>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}InsureAI{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static', filename='images/ai_icon.png') }}" type="image/png">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind_output.css') }}">
+{% block head %}{% endblock %}
+<script>
+(function() { try { const theme = localStorage.getItem('theme') || 'system'; const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches; if (theme === 'dark' || (theme === 'system' && prefersDark)) { document.documentElement.classList.add('dark'); } else { document.documentElement.classList.remove('dark'); } } catch (_) {} })();
+</script>
+<style> [x-cloak] { display: none !important; } </style>
+</head>
+<body class="min-h-screen bg-background font-sans antialiased text-foreground">
+<div x-data="{ mobileMenuOpen: false, theme: localStorage.getItem('theme') || 'system' }"
+x-init="$watch('theme', val => { localStorage.setItem('theme', val); if (val === 'dark' || (val === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) { document.documentElement.classList.add('dark'); } else { document.documentElement.classList.remove('dark'); } }); console.log('Alpine initialized for RiskNet AI Layout.');" class="flex flex-col min-h-screen">
+
+<header class="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <div class="container flex h-16 max-w-screen-2xl items-center px-4 sm:px-6 lg:px-8">
+        <a href="{{ url_for('home_route') }}" class="mr-4 md:mr-6 flex items-center space-x-2">
+            <i data-lucide="shield-check" class="h-7 w-7 text-primary"></i>
+            <span class="font-bold text-lg inline-block text-foreground">InsureAI</span>
+        </a>
+        <nav class="hidden md:flex flex-1 items-center space-x-4 lg:space-x-6 text-sm font-medium">
+            <a href="{{ url_for('home_route') }}" class="items-center px-2 py-1 transition-colors hover:text-primary {% if request.endpoint == 'home_route' %}text-primary font-semibold border-b-2 border-primary{% else %}text-foreground/70 hover:text-foreground/90{% endif %}">
+                <i data-lucide="home" class="mr-1.5 h-4 w-4"></i>Home
+            </a>
+            <a href="{{ url_for('car_assessment_route') }}" class="flex items-center px-2 py-1 transition-colors hover:text-primary {% if request.endpoint == 'car_assessment_route' %}text-primary font-semibold border-b-2 border-primary{% else %}text-foreground/70 hover:text-foreground/90{% endif %}">
+                <i data-lucide="car" class="mr-1.5 h-4 w-4"></i>Risk Assessment
+            </a>
+            <!-- Other insurance type links removed -->
+        </nav>
+        <div class="flex flex-1 items-center justify-end space-x-2 md:space-x-3">
+             <button @click="theme = document.documentElement.classList.contains('dark') ? 'light' : 'dark'" title="Toggle Theme" class="btn btn-ghost btn-icon h-9 w-9 md:h-10 md:w-10 text-foreground/70 hover:text-primary">
+                 <i data-lucide="sun" class="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0"></i>
+                 <i data-lucide="moon" class="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100"></i>
+                 <span class="sr-only">Toggle theme</span>
+            </button>
+             <button @click="mobileMenuOpen = !mobileMenuOpen" type="button" class="md:hidden inline-flex items-center justify-center rounded-md p-1.5 text-foreground/70 hover:text-primary focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring" :aria-expanded="mobileMenuOpen.toString()">
+                 <span class="sr-only">Open Menu</span>
+                 <i data-lucide="menu" class="h-6 w-6 block" :class="{ 'hidden': mobileMenuOpen }"></i>
+                 <i data-lucide="x" class="h-6 w-6 hidden" :class="{ 'block': mobileMenuOpen, 'hidden': !mobileMenuOpen }"></i>
+             </button>
+        </div>
+    </div>
+</header>
+
+<!-- Mobile Menu -->
+<div x-show="mobileMenuOpen" x-cloak @click.away="mobileMenuOpen = false" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 -translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 -translate-y-4" class="md:hidden absolute top-16 inset-x-0 z-40 origin-top container" id="mobile-menu">
+    <div class="rounded-lg bg-popover text-popover-foreground p-4 ring-1 ring-border shadow-xl">
+        <nav class="grid gap-y-3">
+            <a href="{{ url_for('home_route') }}" @click="mobileMenuOpen = false"
+                  class="flex items-center rounded-md p-3 text-base font-medium hover:bg-accent hover:text-accent-foreground {% if request.endpoint == 'home_route' %}bg-accent text-accent-foreground{% else %}text-foreground/80{% endif %}">
+                <i data-lucide="home" class="mr-3 h-5 w-5"></i>Home
+            </a>
+            <a href="{{ url_for('car_assessment_route') }}" @click="mobileMenuOpen = false"
+                  class="flex items-center rounded-md p-3 text-base font-medium hover:bg-accent hover:text-accent-foreground {% if request.endpoint == 'car_assessment_route' %}bg-accent text-accent-foreground{% else %}text-foreground/80{% endif %}">
+                <i data-lucide="car" class="mr-3 h-5 w-5"></i>Risk Assessment
+            </a>
+            <!-- Other insurance type links removed from mobile menu -->
+        </nav>
+    </div>
+</div>
+
+<main class="flex-grow container mx-auto mt-8 mb-16 px-4 sm:px-6 lg:px-8">
+    <div id="flash-messages-main" class="mb-6 max-w-4xl mx-auto">
+        {% include 'includes/_flash_messages.html' ignore missing %} {# Added 'ignore missing' for robustness #}
+    </div>
+    {% block content %}{% endblock %}
+</main>
+
+<footer class="border-t border-border/40 bg-muted/50">
+    <div class="container py-8 text-center text-sm text-muted-foreground">
+        <p>© {{ now.year }} InsureAI Platform. All Rights Reserved.</p>
+        <p class="mt-1">AI-Powered Solutions for Intelligent Risk Assessement.</p>
+    </div>
+</footer>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/lucide/lucide.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/alpine/alpine.min.js') }}" defer></script>
+<script>
+     function renderIcons() {
+         if (typeof lucide !== 'undefined' && typeof lucide.createIcons === 'function') {
+             try { lucide.createIcons(); }
+             catch(e) { console.warn("Lucide render error:", e); }
+         } else {
+             // console.warn("Lucide unavailable on this render pass."); // Less noisy
+         }
+     }
+     document.addEventListener('DOMContentLoaded', () => {
+         renderIcons();
+         if (typeof Alpine !== 'undefined' && Alpine.effect) {
+            Alpine.effect(() => {
+                // Using requestAnimationFrame for smoother icon rendering after DOM updates by Alpine
+                requestAnimationFrame(renderIcons);
+            });
+         }
+     });
+     // Re-render icons on mobile menu toggle if new icons appear
+     const mobileMenuButton = document.querySelector('[aria-expanded]');
+     if (mobileMenuButton) {
+         new MutationObserver(renderIcons).observe(mobileMenuButton, { attributes: true });
+     }
+</script>
+<script src="{{ url_for('static', filename='js/main_app.js') }}"></script>
+{% block page_scripts %}{% endblock %}
+</body>
+</html># train_rf.py
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (accuracy_score, classification_report, roc_auc_score,
+                             f1_score, precision_score, recall_score,
+                             confusion_matrix, roc_curve, auc)
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pickle
+import os
+
+# Import from map.py
+from map import predefined_mappings, get_level
+
+# --- Configuration ---
+TARGET_COLUMN = 'RISKY'
+INPUT_FILE_PATH = 'data.csv' # Ensure your CSV is named this or change the path
+SAVE_DIR = 'models/pkl'
+MODEL_SAVE_PATH = os.path.join(SAVE_DIR, 'random_forest_model.pkl')
+
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+# Define raw CSV column names and their mapping configurations
+# These names *must* match the column headers in your data.csv
+RAW_FEATURES_CONFIG = {
+    # Features to be binned using get_level
+    'puissance': {'type': 'binned', 'map_key': 'puissance', 'final_name': 'PSS'},
+    'age_objet_assuree': {'type': 'binned', 'map_key': 'age_objet_assuree', 'final_name': 'AGO'},
+    'valeur_venale': {'type': 'binned', 'map_key': 'valeur_ranges', 'final_name': 'VV'},
+    'valeur_neuve': {'type': 'binned', 'map_key': 'valeur_ranges', 'final_name': 'VN'},
+    'charge_utile': {'type': 'binned', 'map_key': 'charge_utile', 'final_name': 'CU'},
+    'anciennete': {'type': 'binned', 'map_key': 'anciennete', 'final_name': 'ANC'},
+    'place': {'type': 'binned', 'map_key': 'place', 'final_name': 'PLA'},
+    'age_client': {'type': 'binned', 'map_key': 'age_client', 'final_name': 'AGE'},
+    # Feature to be taken as float
+    'classe': {'type': 'float', 'final_name': 'CLS'},
+    # Categorical features for direct mapping
+    'usage': {'type': 'categorical', 'map_key': 'usage', 'final_name': 'USG'},
+    'activite': {'type': 'categorical', 'map_key': 'activite', 'final_name': 'ACT'},
+    'delegation': {'type': 'categorical', 'map_key': 'delegation', 'final_name': 'DLG'},
+    'civilite': {'type': 'categorical', 'map_key': 'civilite', 'final_name': 'CIV'},
+    'marque': {'type': 'categorical', 'map_key': 'marque', 'final_name': 'MRQ'},
+    'carrosserie': {'type': 'categorical', 'map_key': 'carrosserie', 'final_name': 'CRS'},
+    'energie': {'type': 'categorical', 'map_key': 'energie', 'final_name': 'EN'},
+    'sexe': {'type': 'categorical', 'map_key': 'sexe', 'final_name': 'SX'},
+}
+
+# Define the exact order of features for the model (must match Streamlit app)
+FINAL_FEATURE_ORDER = [
+    'USG', 'ACT', 'DLG', 'CIV', 'MRQ', 'CRS', 'EN', 'SX',  # Categorical
+    'PSS', 'AGO', 'VV', 'VN', 'CU', 'ANC', 'CLS', 'AGE', 'PLA'  # Numerical
+]
+
+MISSING_PLACEHOLDERS = ['', ' ', '?', '#', 'NA', 'N/A', 'None', 'none', 'MISSING', np.nan]
+TARGET_MAP = {'Y': 1, 'N': 0}
+TARGET_NAMES = ["No (Non-Risky)", "Yes (Risky)"]
+
+# --- Load Data ---
+print("--- Loading Data ---")
+try:
+    data = pd.read_csv(INPUT_FILE_PATH, delimiter=',', na_values=MISSING_PLACEHOLDERS)
+    print(f"Successfully loaded data from {INPUT_FILE_PATH}. Shape: {data.shape}")
+except FileNotFoundError:
+    print(f"Error: Input file not found at {INPUT_FILE_PATH}")
+    exit()
+except Exception as e:
+    print(f"Error loading data: {e}")
+    exit()
+
+raw_feature_cols_needed = list(RAW_FEATURES_CONFIG.keys()) + [TARGET_COLUMN]
+missing_cols = [col for col in raw_feature_cols_needed if col not in data.columns]
+if missing_cols:
+    print(f"Error: Missing required columns in CSV: {missing_cols}")
+    exit()
+
+# --- Preprocess Data ---
+print("--- Preprocessing Data ---")
+data['target_encoded'] = data[TARGET_COLUMN].map(TARGET_MAP)
+if data['target_encoded'].isnull().any():
+    data.dropna(subset=['target_encoded'], inplace=True)
+data['target_encoded'] = data['target_encoded'].astype(int)
+y = data['target_encoded']
+
+processed_features = pd.DataFrame(index=data.index)
+for raw_col, config in RAW_FEATURES_CONFIG.items():
+    final_name = config['final_name']
+    if config['type'] == 'binned':
+        def safe_get_level(value, ranges):
+            try: return get_level(value, ranges)
+            except ValueError: return np.nan
+            except TypeError: return np.nan
+        processed_features[final_name] = data[raw_col].apply(lambda x: safe_get_level(x, predefined_mappings[config['map_key']]))
+    elif config['type'] == 'categorical':
+        processed_features[final_name] = data[raw_col].map(predefined_mappings[config['map_key']])
+    elif config['type'] == 'float':
+        processed_features[final_name] = pd.to_numeric(data[raw_col], errors='coerce')
+
+X = processed_features[FINAL_FEATURE_ORDER]
+print("Initial missing values in X (after processing, before imputation):")
+print(X.isnull().sum()[X.isnull().sum() > 0])
+
+# --- Split Data ---
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=1400, stratify=y)
+
+# --- Impute and Scale ---
+imputer = SimpleImputer(strategy='median')
+X_train_imputed = imputer.fit_transform(X_train)
+X_test_imputed = imputer.transform(X_test)
+X_train_imputed_df = pd.DataFrame(X_train_imputed, columns=X.columns, index=X_train.index)
+X_test_imputed_df = pd.DataFrame(X_test_imputed, columns=X.columns, index=X_test.index)
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train_imputed_df)
+X_test_scaled = scaler.transform(X_test_imputed_df)
+print("Features imputed and scaled.")
+
+# --- Train Random Forest Model ---
+print("--- Training Random Forest Model ---")
+rf_model = RandomForestClassifier(
+    n_estimators=200, max_depth=14, random_state=1400,
+    class_weight='balanced', n_jobs=-1
+)
+rf_model.fit(X_train_scaled, y_train)
+print("Model training completed!")
+
+# --- Evaluate Model ---
+y_pred = rf_model.predict(X_test_scaled)
+y_pred_prob = rf_model.predict_proba(X_test_scaled)[:, 1]
+accuracy = accuracy_score(y_test, y_pred)
+try: roc_auc = roc_auc_score(y_test, y_pred_prob)
+except ValueError: roc_auc = np.nan
+print(f"Accuracy: {accuracy:.4f}")
+print(f"ROC-AUC Score: {roc_auc:.4f if not np.isnan(roc_auc) else 'N/A'}")
+print("\nClassification Report:"); print(classification_report(y_test, y_pred, target_names=TARGET_NAMES))
+cm = confusion_matrix(y_test, y_pred); print("\nConfusion Matrix:"); print(cm)
+
+# --- Save Model Artifacts ---
+model_artifacts = {
+    'model': rf_model, 'scaler': scaler, 'imputer': imputer,
+    'feature_order': FINAL_FEATURE_ORDER,
+    'raw_features_config': RAW_FEATURES_CONFIG,
+    'target_map': TARGET_MAP, 'target_names': TARGET_NAMES
+}
+try:
+    with open(MODEL_SAVE_PATH, 'wb') as file: pickle.dump(model_artifacts, file)
+    print(f"Model artifacts successfully saved to {MODEL_SAVE_PATH}")
+except Exception as e: print(f"Error saving model artifacts: {e}")
+
+# --- Visualizations (Optional) ---
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=TARGET_NAMES, yticklabels=TARGET_NAMES)
+plt.title('Confusion Matrix (Random Forest)'); plt.xlabel('Predicted Label'); plt.ylabel('Actual Label'); plt.show()
+
+try:
+    importances = rf_model.feature_importances_
+    feature_importance_df = pd.DataFrame({'Feature': FINAL_FEATURE_ORDER, 'Importance': importances})
+    feature_importance_df = feature_importance_df.sort_values(by='Importance', ascending=False)
+    plt.figure(figsize=(10, 8))
+    sns.barplot(x='Importance', y='Feature', data=feature_importance_df.head(20), palette='viridis')
+    plt.title('Top Feature Importances (Random Forest)'); plt.tight_layout(); plt.show()
+except Exception as e: print(f"Could not generate feature importance plot: {e}")
+
+print("--- Random Forest Training Script Finished ---")# train_xgb.py
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from xgboost import XGBClassifier
+from sklearn.metrics import (accuracy_score, classification_report, roc_auc_score,
+                             f1_score, precision_score, recall_score,
+                             confusion_matrix, roc_curve, auc,
+                             precision_recall_curve, average_precision_score)
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pickle
+import os
+import warnings
+
+# Import from map.py
+from map import predefined_mappings, get_level
+
+# --- Configuration ---
+TARGET_COLUMN = 'RISKY'
+INPUT_FILE_PATH = 'data.csv' # Ensure your CSV is named this or change the path
+SAVE_DIR = 'models/pkl'
+MODEL_SAVE_PATH = os.path.join(SAVE_DIR, 'xgboost_model.pkl')
+
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+# Define raw CSV column names and their mapping configurations
+# These names *must* match the column headers in your data.csv
+RAW_FEATURES_CONFIG = {
+    # Features to be binned using get_level
+    'puissance': {'type': 'binned', 'map_key': 'puissance', 'final_name': 'PSS'},
+    'age_objet_assuree': {'type': 'binned', 'map_key': 'age_objet_assuree', 'final_name': 'AGO'},
+    'valeur_venale': {'type': 'binned', 'map_key': 'valeur_ranges', 'final_name': 'VV'}, # Uses 'valeur_ranges'
+    'valeur_neuve': {'type': 'binned', 'map_key': 'valeur_ranges', 'final_name': 'VN'},   # Uses 'valeur_ranges'
+    'charge_utile': {'type': 'binned', 'map_key': 'charge_utile', 'final_name': 'CU'},
+    'anciennete': {'type': 'binned', 'map_key': 'anciennete', 'final_name': 'ANC'},
+    'place': {'type': 'binned', 'map_key': 'place', 'final_name': 'PLA'},
+    'age_client': {'type': 'binned', 'map_key': 'age_client', 'final_name': 'AGE'},
+    # Feature to be taken as float
+    'classe': {'type': 'float', 'final_name': 'CLS'},
+    # Categorical features for direct mapping
+    'usage': {'type': 'categorical', 'map_key': 'usage', 'final_name': 'USG'},
+    'activite': {'type': 'categorical', 'map_key': 'activite', 'final_name': 'ACT'},
+    'delegation': {'type': 'categorical', 'map_key': 'delegation', 'final_name': 'DLG'},
+    'civilite': {'type': 'categorical', 'map_key': 'civilite', 'final_name': 'CIV'},
+    'marque': {'type': 'categorical', 'map_key': 'marque', 'final_name': 'MRQ'},
+    'carrosserie': {'type': 'categorical', 'map_key': 'carrosserie', 'final_name': 'CRS'},
+    'energie': {'type': 'categorical', 'map_key': 'energie', 'final_name': 'EN'},
+    'sexe': {'type': 'categorical', 'map_key': 'sexe', 'final_name': 'SX'},
+}
+
+# Define the exact order of features for the model (must match Streamlit app)
+FINAL_FEATURE_ORDER = [
+    'USG', 'ACT', 'DLG', 'CIV', 'MRQ', 'CRS', 'EN', 'SX',  # Categorical
+    'PSS', 'AGO', 'VV', 'VN', 'CU', 'ANC', 'CLS', 'AGE', 'PLA'  # Numerical
+]
+
+MISSING_PLACEHOLDERS = ['', ' ', '?', '#', 'NA', 'N/A', 'None', 'none', 'MISSING', np.nan]
+TARGET_MAP = {'Y': 1, 'N': 0}
+TARGET_NAMES = ["No (Non-Risky)", "Yes (Risky)"]
+
+# --- Load Data ---
+print("--- Loading Data ---")
+try:
+    data = pd.read_csv(INPUT_FILE_PATH, delimiter=',', na_values=MISSING_PLACEHOLDERS)
+    print(f"Successfully loaded data from {INPUT_FILE_PATH}. Shape: {data.shape}")
+except FileNotFoundError:
+    print(f"Error: Input file not found at {INPUT_FILE_PATH}")
+    exit()
+except Exception as e:
+    print(f"Error loading data: {e}")
+    exit()
+
+# Check for required raw feature columns and target
+raw_feature_cols_needed = list(RAW_FEATURES_CONFIG.keys()) + [TARGET_COLUMN]
+missing_cols = [col for col in raw_feature_cols_needed if col not in data.columns]
+if missing_cols:
+    print(f"Error: Missing required columns in CSV: {missing_cols}")
+    exit()
+
+# --- Preprocess Data ---
+print("--- Preprocessing Data ---")
+
+# 1. Target Encoding
+print(f"Encoding target variable '{TARGET_COLUMN}'...")
+data['target_encoded'] = data[TARGET_COLUMN].map(TARGET_MAP)
+if data['target_encoded'].isnull().any():
+    print(f"Warning: Rows with unmappable target values found. Dropping them.")
+    data.dropna(subset=['target_encoded'], inplace=True)
+data['target_encoded'] = data['target_encoded'].astype(int)
+y = data['target_encoded']
+print(f"Target encoded. Class distribution:\n{y.value_counts(normalize=True)}")
+
+# 2. Feature Processing
+processed_features = pd.DataFrame(index=data.index)
+
+print("Processing features according to RAW_FEATURES_CONFIG...")
+for raw_col, config in RAW_FEATURES_CONFIG.items():
+    final_name = config['final_name']
+    print(f"  Processing raw column '{raw_col}' to final feature '{final_name}' (type: {config['type']})")
+    if config['type'] == 'binned':
+        # Handle potential errors from get_level (e.g., value out of range)
+        def safe_get_level(value, ranges):
+            try:
+                return get_level(value, ranges)
+            except ValueError as e_level: # Catches if value is out of defined range in get_level
+                # print(f"Warning for column {raw_col}, value {value}: {e_level}. Assigning NaN.")
+                return np.nan # Assign NaN, to be imputed
+            except TypeError as e_type: # Catches if value is not suitable for get_level (e.g. non-numeric string)
+                # print(f"Warning for column {raw_col}, value {value}: {e_type}. Assigning NaN.")
+                return np.nan
+
+        processed_features[final_name] = data[raw_col].apply(
+            lambda x: safe_get_level(x, predefined_mappings[config['map_key']])
+        )
+    elif config['type'] == 'categorical':
+        processed_features[final_name] = data[raw_col].map(predefined_mappings[config['map_key']])
+        # Values not in map become NaN, will be imputed
+    elif config['type'] == 'float':
+        processed_features[final_name] = pd.to_numeric(data[raw_col], errors='coerce')
+        # Values that can't be coerced become NaN, will be imputed
+
+# Reorder columns to match FINAL_FEATURE_ORDER for consistency
+X = processed_features[FINAL_FEATURE_ORDER]
+
+print("Initial missing values in X (after processing, before imputation):")
+print(X.isnull().sum()[X.isnull().sum() > 0])
+
+# --- Split Data ---
+print("--- Splitting Data ---")
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, random_state=1400, stratify=y
+)
+print(f"Training set shape: X={X_train.shape}, y={y_train.shape}")
+print(f"Test set shape: X={X_test.shape}, y={y_test.shape}")
+
+# --- Impute and Scale ---
+print("--- Imputing and Scaling ---")
+imputer = SimpleImputer(strategy='median') # Median is robust to outliers
+X_train_imputed = imputer.fit_transform(X_train)
+X_test_imputed = imputer.transform(X_test)
+
+# Convert back to DataFrame to pass to scaler (maintains column order for scaler)
+X_train_imputed_df = pd.DataFrame(X_train_imputed, columns=X.columns, index=X_train.index)
+X_test_imputed_df = pd.DataFrame(X_test_imputed, columns=X.columns, index=X_test.index)
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train_imputed_df) # Fit on imputed training data
+X_test_scaled = scaler.transform(X_test_imputed_df)   # Transform imputed test data
+
+print("Features imputed and scaled.")
+
+# --- Train XGBoost Model ---
+print("--- Training XGBoost Model ---")
+count_class_0 = np.sum(y_train == 0)
+count_class_1 = np.sum(y_train == 1)
+scale_pos_weight = count_class_0 / count_class_1 if count_class_1 > 0 else 1
+print(f"Calculated scale_pos_weight: {scale_pos_weight:.4f}")
+
+xgb_model = XGBClassifier(
+    n_estimators=200, max_depth=14, learning_rate=0.1,
+    objective='binary:logistic', random_state=1400,
+    tree_method='hist', enable_categorical=False, # Features are all numeric now
+    scale_pos_weight=scale_pos_weight, n_jobs=-1,
+    use_label_encoder=False, eval_metric='logloss' # Explicitly set use_label_encoder
+)
+xgb_model.fit(X_train_scaled, y_train)
+print("Model training completed!")
+
+# --- Evaluate Model ---
+print("--- Evaluating Model ---")
+y_pred = xgb_model.predict(X_test_scaled)
+y_pred_prob = xgb_model.predict_proba(X_test_scaled)[:, 1]
+
+accuracy = accuracy_score(y_test, y_pred)
+try:
+    roc_auc = roc_auc_score(y_test, y_pred_prob)
+except ValueError as e:
+    roc_auc = np.nan
+    print(f"Could not calculate ROC AUC: {e}")
+
+print(f"Accuracy: {accuracy:.4f}")
+print(f"ROC-AUC Score: {roc_auc:.4f if not np.isnan(roc_auc) else 'N/A'}")
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, target_names=TARGET_NAMES))
+print("\nConfusion Matrix:")
+cm = confusion_matrix(y_test, y_pred)
+print(cm)
+
+# --- Save Model Artifacts ---
+print("--- Saving Model Artifacts ---")
+model_artifacts = {
+    'model': xgb_model, 'scaler': scaler, 'imputer': imputer,
+    'feature_order': FINAL_FEATURE_ORDER, # Critical for ensuring correct input order
+    'raw_features_config': RAW_FEATURES_CONFIG, # For reference on how features were derived
+    'target_map': TARGET_MAP, 'target_names': TARGET_NAMES
+}
+try:
+    with open(MODEL_SAVE_PATH, 'wb') as file:
+        pickle.dump(model_artifacts, file)
+    print(f"Model artifacts successfully saved to {MODEL_SAVE_PATH}")
+except Exception as e:
+    print(f"Error saving model artifacts: {e}")
+
+# --- Visualizations (Optional) ---
+# Confusion Matrix Plot
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=TARGET_NAMES, yticklabels=TARGET_NAMES)
+plt.title('Confusion Matrix (XGBoost)')
+plt.xlabel('Predicted Label'); plt.ylabel('Actual Label')
+plt.show()
+
+# Feature Importance Plot
+try:
+    importances = xgb_model.feature_importances_
+    feature_importance_df = pd.DataFrame({'Feature': FINAL_FEATURE_ORDER, 'Importance': importances})
+    feature_importance_df = feature_importance_df.sort_values(by='Importance', ascending=False)
+    plt.figure(figsize=(10, 8))
+    sns.barplot(x='Importance', y='Feature', data=feature_importance_df.head(20), palette='viridis')
+    plt.title('Top Feature Importances (XGBoost)'); plt.tight_layout(); plt.show()
+except Exception as e:
+    print(f"Could not generate feature importance plot: {e}")
+
+print("--- XGBoost Training Script Finished ---")# map.py (Save this as map.py in the same directory)
+
+predefined_mappings = {
+    "usage": {"VP": 0, "u1": 1, "moto": 2, "taxi": 3, "U2": 4, "engin": 5, "autre": 6, "louage": 7, "transport_rural": 8, "taxi_collectif": 9},
+    "civilite": {"Mr": 0, "Mme": 1, "Entreprise": 2, "mult_CT": 3, "Org": 4, "Couple": 5, "Etablissement": 6},
+    "activite": {"EDUCATION_FORMATION": 0, "PROFESSIONS_MEDICALES": 1, "EMPLOYE": 2, "RETRAITE": 3, "ACTIVITES_COMMERCIALES": 4, "AGRICULTURE": 5, "RESIDENT_A_L'ETRANGER": 6, "ARTISAN": 7, "CORPS_ACTIFS": 8, "INGENIEUR": 9, "CHAUFFEUR": 10, "PARAMEDICAL": 11, "OUVRIER": 12, "TAXI_LOUAGE_TRASPORT_RURAL": 13, "ARCHITECTURE_BTP_IMMOBILIER": 14, "TECHNICIEN": 15, "GERANT_DIRIGEANT": 16, "PROFESSIONNEL_CONSULTANT_EXPERT": 17, "METIERS_LEGAUX": 18, "INFORMATIQUE": 19, "DIRECTEUR": 20, "TOURISME": 21, "AUTO_ECOLE": 22, "ACTIVITES_SPORTIVES": 23, "ACTIVITES_ARTISTIQUES": 24, "TRANSPORT_AEREEN": 25, "ETAT": 26, "TRANSPORT": 27, "ACTIVITES_FINACIAIRES_ET_BANCAIRES": 28, "JOURNALISME": 29, "DIPLOMATIE": 30, "ASSOCIATIONS_ONG": 31, "SANS_PROFESSION": 32, "ACTIVITES_INDUSTRIELLES": 33},
+    # CLS is treated as numeric, no mapping dict needed here.
+    "marque": {"RENAULT": 0,"VOLKSWAGEN": 1,"PEUGEOT": 2,"FIAT": 3,"CITROEN": 4,"KIA": 5,"FORD": 6,"OPEL": 7,"ISUZU": 8,"MERCEDES-BENZ": 9,"TOYOTA": 10,"HYUNDAI": 11,"NISSAN": 12,"SEAT": 13,"B.M.W.": 14,"CHEVROLET": 15,"AUDI": 16,"MITSUBISHI": 17,"DACIA": 18,"SUZUKI": 19,"MAZDA": 20,"IVECO": 21,"CHERY": 22,"MAHINDRA": 23,"SSANGYONG": 24,"SKODA": 25,"GREATWALL": 26,"MBK": 27,"CHRYSLER": 28,"PIAGGIO": 29,"MINI": 30,"JEEP": 31,"VOLVO": 32,"YAMAHA": 33,"JAGUAR_LAND_ROVER": 34,"HONDA": 35,"TATA": 36,"PO": 37,"ALFA_ROMEO": 38,"MG": 39,"UNISCOOT": 40,"DAEWOO": 41,"JIALING": 42,"LANCIA": 43,"DAIMLER": 44,"BERLIET": 45,"SCANIA": 46,"DONG_FENG_": 47,"DFSK": 48,"ROVER": 49,"APRILIA": 50,"TUNICOM": 51,"COMET": 52,"LANDINI": 53,"WALLYSCAR": 54,"ZIMOTA": 55,"MALAGUTI": 56,"MAN": 57,"SMART": 58,"DAIHATSU": 59,"JEDAA": 60,"MISTRAL": 61,"AVIA": 62,"MASSEY_FERGUSON": 63,"PORSCHE": 64,"FTM": 65,"CATERPILLAR": 66,"FOTON": 67,"KYMCO": 68,"BAIC": 69,"DEUTZ": 70,"KUBOTA": 71,"DAF": 72,"HUARD-TUNISIE": 73,"VESPA": 74,"GILERA": 75,"COMECAB": 76,"SAME_DEUTZ_FAHR": 77,"SAMSUNG": 78,"HIDROMEK": 79,"KINGLONG": 80,"AUTOBIANCHI": 81,"DS": 82,"BENTLEY": 83,"MASERATI": 84,"AIMA": 85,"INFINITI": 86,"BENZHOU": 87,"BOBCAT": 88,"DOOSAN": 89,"SIMATRA": 90,"SYM": 91,"CASE": 92,"BAOLI": 93,"DODGE": 94,"HAVAL": 95,"MAGIRUS": 96,"LADA": 97,"LAMBORGHINI": 98,"GEELY": 99}, # Map MRQ
+    "delegation": {'Ariana Ville': 0,'Sfax Ville': 1,'Monastir': 2,'El Menzah': 3,'Le Bardo': 4,'Mannouba': 5,'El Mourouj': 6,'Hammamet': 7,'Sousse Ville': 8,'Sakiet Ezzit': 9,'Sousse Jaouhara': 10,'La Marsa': 11,'La Soukra': 12,'Nabeul': 13,'Ben Arous': 14,'Msaken': 15,'Raoued': 16,'Sousse Riadh': 17,'Kairouan Sud': 18,'Moknine': 19,'Bizerte Nord': 20,'Sakiet Eddaier': 21,'Rades': 22,'El Omrane Superieur': 23,'Ezzahra': 24,'Hammam Sousse': 25,'Le Kef Est': 26,'Nouvelle Medina': 27,'Sfax Sud': 28,'El Kabbaria': 29,'Megrine': 30,'Bou Mhel El Bassatine': 31,'Hammam Lif': 32,'Mahdia': 33,'El Ouerdia': 34,'La Goulette': 35,'Gafsa Sud': 36,'Jendouba Nord': 37,'Ksibet El Mediouni': 38,'Beja Nord': 39,'Carthage': 40,'Houmet Essouk': 41,'Korba': 42,'Fouchana': 43,'Hammam Chatt': 44,'Bab Bhar': 45,'Kalaa El Kebira': 46,'Zarzis': 47,'Ettahrir': 48,'Ksar Helal': 49,'Ezzouhour (Tunis)': 50,'Siliana Sud': 51,'Kalaa Essghira': 52,'Kelibia': 53,'Oued Ellil': 54,'Akouda': 55,'Dar Chaabane Elfehri': 56,'Kasserine Nord': 57,'El Hrairia': 58,'Gabes Medina': 59,'Mornag': 60,'Mnihla': 61,'Sayada Lamta Bou Hajar': 62,'Midoun': 63,'Sidi El Bechir': 64,'Cite El Khadra': 65,'Grombalia': 66,'Mohamadia': 67,'Zaghouan': 68,'Sfax Est': 69,'Beni Khiar': 70,'Sidi Hassine': 71,'Ettadhamen': 72,'La Medina': 73,'Teboulba': 74,'Feriana': 75,'Soliman': 76,'Jemmal': 77,'La Chebba': 78,'Mejez El Bab': 79,'Sidi Bouzid Ouest': 80,'Sahline': 81,'Bembla': 82,'El Kram': 83,'Gabes Sud': 84,'Menzel Bourguiba': 85,'Menzel Temime': 86,'Medenine Sud': 87,'El Omrane': 88,'Bou Merdes': 89,'El Ksar': 90,'Ras Jebel': 91,'Ajim': 92,'Mornaguia': 93,'Le Kef Ouest': 94,'Tozeur': 95,'Beni Khalled': 96,'Kebili Sud': 97,'Douar Hicher': 98,'Menzel Jemil': 99,'Testour': 100,'Ghardimaou': 101,'Tajerouine': 102,'Enfidha': 103,'Gabes Ouest': 104,'Essijoumi': 105,'Ksour Essaf': 106,'Douz': 107,'Menzel Bouzelfa': 108,'Tataouine Sud': 109,'Ouerdanine': 110,'Jedaida': 111,'Souassi': 112,'El Hamma': 113,'El Jem': 114,'Bou Argoub': 115,'Zeramdine': 116,'Tinja': 117,'Jebel Jelloud': 118,'Sidi Thabet': 119,'Dahmani': 120,'Mahras': 121,'Bekalta': 122,'Jebeniana': 123,'Kairouan Nord': 124,'Makthar': 125,'Ouled Chamakh': 126,'Agareb': 127,'Bou Salem': 128,'Gaafour': 129,'Bir Ali Ben Khelifa': 130,'Jarzouna': 131,'El Haouaria': 132,'Sakiet Sidi Youssef': 133,'Bou Hajla': 134,'Teboursouk': 135,'Ben Guerdane': 136,'El Guettar': 137,'Ain Draham': 138,'Sned': 139,'Chorbane': 140,'Le Sers': 141,'Ezzouhour (Kasserine)': 142,'El Amra': 143,'Nebeur': 144,'Hammam El Ghezaz': 145,'Sbikha': 146,'Bou Ficha': 147,'Fernana': 148,'Beni Hassen': 149,'El Ksour': 150,'Foussana': 151,'El Hencha': 152,'Sidi Bou Ali': 153,'Degueche': 154,'Kalaat Sinane': 155,'Sidi Alouene': 156,'Hammam Zriba': 157,'Kerkenah': 158,'Metlaoui': 159,'Oueslatia': 160,'Borj El Amri': 161,'Bou Arada': 162,'Tebourba': 163,'Bizerte Sud': 164,'El Mida': 165,'Hergla': 166,'Thala': 167,'El Mdhilla': 168,'Sbeitla': 169,'Tabarka': 170,'Nasrallah': 171,'El Fahs': 172,'Bir Mcherga': 173,'Souk El Ahad': 174,'Jendouba': 175,'Cherarda': 176,'Mareth': 177,'Mateur': 178,'Hajeb El Ayoun': 179,'Le Krib': 180,'Ennadhour': 181,'Moulares': 182,'Nefza': 183,'Mejel Bel Abbes': 184,'El Metouia': 185,'Haffouz': 186,'Oued Mliz': 187,'Chebika': 188,'Ghar El Melh': 189,'Bab Souika': 190,'El Alia': 191,'El Ala': 192,'Tataouine Nord': 193,'Menzel Chaker': 194,'Kalaat Landlous': 195,'Esskhira': 196,'Rohia': 197,'Regueb': 198,'Bargou': 199,'Sidi El Heni': 200,'Redeyef': 201,'Kesra': 202,'Hassi El Frid': 203,'Sidi Aich': 204,'Nefta': 205,'Beni Khedache': 206,'Jerissa': 207,'Nouvelle Matmata': 208,'Kebili Nord': 209,'Ghomrassen': 210,'Melloulech': 211,'Utique': 212,'Kalaa El Khasba': 213,'El Battan': 214,'Thibar': 215,'Maknassy': 216,'Amdoun': 217,'Takelsa': 218,'Ghannouche': 219,'Sidi Bouzid Est': 220,'Goubellat': 221,'El Aroussa': 222,'Saouef': 223,'Sidi Bou Rouis': 224,'Sejnane': 225,'Kasserine Sud': 226,'Smar': 227,'Bir El Haffey': 228,'Ouled Haffouz': 229,'Ben Oun': 230,'Kondar': 231,'Mezzouna': 232,'Jilma': 233,'Sbiba': 234,'Ghraiba': 235,'Bir Lahmar': 236,'Beja Sud': 237,'Joumine': 238,'Dhehiba': 239,'Haidra': 240,'Hbira': 241,'Menzel Bouzaiene': 242,'Gafsa Nord': 243,'Belkhir': 244,'Cebbala': 245,'Sidi Makhlouf': 246,'Jediliane': 247,'Touiref': 248,'Balta Bou Aouene': 249,'Menzel Habib': 250,'Matmata': 251,'Souk Jedid': 252,'Tameghza': 253,'Remada': 254,'Medenine Nord': 255,'Hezoua': 256,'Ghezala': 257,'El Faouar': 258,'El Ayoun': 259}, # Map DLG
+    "carrosserie": {"CI-4P": 0,"BREAK": 1,"CAMIONNETTE": 2,"CI-2P": 3,"CABRIOLET": 4,"CI-5P": 5,"PLATEAU": 6,"FOURGON": 7,"MIXTE": 8,"SOLO": 9,"CI-3P": 10,"BENNE": 11,"CAMION": 12,"ENGIN": 13,"mult_CAROSSERIE": 14,"BUS": 15,"PR REM": 16,"ENGIN_AGRICOLE": 17,"REMORQUAGE": 18,"BD": 19,"BACHE": 20,"PR SREM": 21}, # Map CRS
+    "energie": {"ES" : 0,"DI" : 1}, # Map EN
+    "sexe" : {"M":0, "F":1,"JP":2,"C":3}, # Map SX
+
+    # Adding lowercase keys for robustness if needed, assuming keys in map.py match exactly for now
+    "usg": {"VP": 0, "u1": 1, "moto": 2, "taxi": 3, "U2": 4, "engin": 5, "autre": 6, "louage": 7, "transport_rural": 8, "taxi_collectif": 9},
+    "civ": {"Mr": 0, "Mme": 1, "Entreprise": 2, "mult_CT": 3, "Org": 4, "Couple": 5, "Etablissement": 6},
+    "act": {"EDUCATION_FORMATION": 0, "PROFESSIONS_MEDICALES": 1, "EMPLOYE": 2, "RETRAITE": 3, "ACTIVITES_COMMERCIALES": 4, "AGRICULTURE": 5, "RESIDENT_A_L'ETRANGER": 6, "ARTISAN": 7, "CORPS_ACTIFS": 8, "INGENIEUR": 9, "CHAUFFEUR": 10, "PARAMEDICAL": 11, "OUVRIER": 12, "TAXI_LOUAGE_TRASPORT_RURAL": 13, "ARCHITECTURE_BTP_IMMOBILIER": 14, "TECHNICIEN": 15, "GERANT_DIRIGEANT": 16, "PROFESSIONNEL_CONSULTANT_EXPERT": 17, "METIERS_LEGAUX": 18, "INFORMATIQUE": 19, "DIRECTEUR": 20, "TOURISME": 21, "AUTO_ECOLE": 22, "ACTIVITES_SPORTIVES": 23, "ACTIVITES_ARTISTIQUES": 24, "TRANSPORT_AEREEN": 25, "ETAT": 26, "TRANSPORT": 27, "ACTIVITES_FINACIAIRES_ET_BANCAIRES": 28, "JOURNALISME": 29, "DIPLOMATIE": 30, "ASSOCIATIONS_ONG": 31, "SANS_PROFESSION": 32, "ACTIVITES_INDUSTRIELLES": 33},
+    "mrq": {"RENAULT": 0,"VOLKSWAGEN": 1,"PEUGEOT": 2,"FIAT": 3,"CITROEN": 4,"KIA": 5,"FORD": 6,"OPEL": 7,"ISUZU": 8,"MERCEDES-BENZ": 9,"TOYOTA": 10,"HYUNDAI": 11,"NISSAN": 12,"SEAT": 13,"B.M.W.": 14,"CHEVROLET": 15,"AUDI": 16,"MITSUBISHI": 17,"DACIA": 18,"SUZUKI": 19,"MAZDA": 20,"IVECO": 21,"CHERY": 22,"MAHINDRA": 23,"SSANGYONG": 24,"SKODA": 25,"GREATWALL": 26,"MBK": 27,"CHRYSLER": 28,"PIAGGIO": 29,"MINI": 30,"JEEP": 31,"VOLVO": 32,"YAMAHA": 33,"JAGUAR_LAND_ROVER": 34,"HONDA": 35,"TATA": 36,"PO": 37,"ALFA_ROMEO": 38,"MG": 39,"UNISCOOT": 40,"DAEWOO": 41,"JIALING": 42,"LANCIA": 43,"DAIMLER": 44,"BERLIET": 45,"SCANIA": 46,"DONG_FENG_": 47,"DFSK": 48,"ROVER": 49,"APRILIA": 50,"TUNICOM": 51,"COMET": 52,"LANDINI": 53,"WALLYSCAR": 54,"ZIMOTA": 55,"MALAGUTI": 56,"MAN": 57,"SMART": 58,"DAIHATSU": 59,"JEDAA": 60,"MISTRAL": 61,"AVIA": 62,"MASSEY_FERGUSON": 63,"PORSCHE": 64,"FTM": 65,"CATERPILLAR": 66,"FOTON": 67,"KYMCO": 68,"BAIC": 69,"DEUTZ": 70,"KUBOTA": 71,"DAF": 72,"HUARD-TUNISIE": 73,"VESPA": 74,"GILERA": 75,"COMECAB": 76,"SAME_DEUTZ_FAHR": 77,"SAMSUNG": 78,"HIDROMEK": 79,"KINGLONG": 80,"AUTOBIANCHI": 81,"DS": 82,"BENTLEY": 83,"MASERATI": 84,"AIMA": 85,"INFINITI": 86,"BENZHOU": 87,"BOBCAT": 88,"DOOSAN": 89,"SIMATRA": 90,"SYM": 91,"CASE": 92,"BAOLI": 93,"DODGE": 94,"HAVAL": 95,"MAGIRUS": 96,"LADA": 97,"LAMBORGHINI": 98,"GEELY": 99}, # Map MRQ
+    "dlg": {'Ariana Ville': 0,'Sfax Ville': 1,'Monastir': 2,'El Menzah': 3,'Le Bardo': 4,'Mannouba': 5,'El Mourouj': 6,'Hammamet': 7,'Sousse Ville': 8,'Sakiet Ezzit': 9,'Sousse Jaouhara': 10,'La Marsa': 11,'La Soukra': 12,'Nabeul': 13,'Ben Arous': 14,'Msaken': 15,'Raoued': 16,'Sousse Riadh': 17,'Kairouan Sud': 18,'Moknine': 19,'Bizerte Nord': 20,'Sakiet Eddaier': 21,'Rades': 22,'El Omrane Superieur': 23,'Ezzahra': 24,'Hammam Sousse': 25,'Le Kef Est': 26,'Nouvelle Medina': 27,'Sfax Sud': 28,'El Kabbaria': 29,'Megrine': 30,'Bou Mhel El Bassatine': 31,'Hammam Lif': 32,'Mahdia': 33,'El Ouerdia': 34,'La Goulette': 35,'Gafsa Sud': 36,'Jendouba Nord': 37,'Ksibet El Mediouni': 38,'Beja Nord': 39,'Carthage': 40,'Houmet Essouk': 41,'Korba': 42,'Fouchana': 43,'Hammam Chatt': 44,'Bab Bhar': 45,'Kalaa El Kebira': 46,'Zarzis': 47,'Ettahrir': 48,'Ksar Helal': 49,'Ezzouhour (Tunis)': 50,'Siliana Sud': 51,'Kalaa Essghira': 52,'Kelibia': 53,'Oued Ellil': 54,'Akouda': 55,'Dar Chaabane Elfehri': 56,'Kasserine Nord': 57,'El Hrairia': 58,'Gabes Medina': 59,'Mornag': 60,'Mnihla': 61,'Sayada Lamta Bou Hajar': 62,'Midoun': 63,'Sidi El Bechir': 64,'Cite El Khadra': 65,'Grombalia': 66,'Mohamadia': 67,'Zaghouan': 68,'Sfax Est': 69,'Beni Khiar': 70,'Sidi Hassine': 71,'Ettadhamen': 72,'La Medina': 73,'Teboulba': 74,'Feriana': 75,'Soliman': 76,'Jemmal': 77,'La Chebba': 78,'Mejez El Bab': 79,'Sidi Bouzid Ouest': 80,'Sahline': 81,'Bembla': 82,'El Kram': 83,'Gabes Sud': 84,'Menzel Bourguiba': 85,'Menzel Temime': 86,'Medenine Sud': 87,'El Omrane': 88,'Bou Merdes': 89,'El Ksar': 90,'Ras Jebel': 91,'Ajim': 92,'Mornaguia': 93,'Le Kef Ouest': 94,'Tozeur': 95,'Beni Khalled': 96,'Kebili Sud': 97,'Douar Hicher': 98,'Menzel Jemil': 99,'Testour': 100,'Ghardimaou': 101,'Tajerouine': 102,'Enfidha': 103,'Gabes Ouest': 104,'Essijoumi': 105,'Ksour Essaf': 106,'Douz': 107,'Menzel Bouzelfa': 108,'Tataouine Sud': 109,'Ouerdanine': 110,'Jedaida': 111,'Souassi': 112,'El Hamma': 113,'El Jem': 114,'Bou Argoub': 115,'Zeramdine': 116,'Tinja': 117,'Jebel Jelloud': 118,'Sidi Thabet': 119,'Dahmani': 120,'Mahras': 121,'Bekalta': 122,'Jebeniana': 123,'Kairouan Nord': 124,'Makthar': 125,'Ouled Chamakh': 126,'Agareb': 127,'Bou Salem': 128,'Gaafour': 129,'Bir Ali Ben Khelifa': 130,'Jarzouna': 131,'El Haouaria': 132,'Sakiet Sidi Youssef': 133,'Bou Hajla': 134,'Teboursouk': 135,'Ben Guerdane': 136,'El Guettar': 137,'Ain Draham': 138,'Sned': 139,'Chorbane': 140,'Le Sers': 141,'Ezzouhour (Kasserine)': 142,'El Amra': 143,'Nebeur': 144,'Hammam El Ghezaz': 145,'Sbikha': 146,'Bou Ficha': 147,'Fernana': 148,'Beni Hassen': 149,'El Ksour': 150,'Foussana': 151,'El Hencha': 152,'Sidi Bou Ali': 153,'Degueche': 154,'Kalaat Sinane': 155,'Sidi Alouene': 156,'Hammam Zriba': 157,'Kerkenah': 158,'Metlaoui': 159,'Oueslatia': 160,'Borj El Amri': 161,'Bou Arada': 162,'Tebourba': 163,'Bizerte Sud': 164,'El Mida': 165,'Hergla': 166,'Thala': 167,'El Mdhilla': 168,'Sbeitla': 169,'Tabarka': 170,'Nasrallah': 171,'El Fahs': 172,'Bir Mcherga': 173,'Souk El Ahad': 174,'Jendouba': 175,'Cherarda': 176,'Mareth': 177,'Mateur': 178,'Hajeb El Ayoun': 179,'Le Krib': 180,'Ennadhour': 181,'Moulares': 182,'Nefza': 183,'Mejel Bel Abbes': 184,'El Metouia': 185,'Haffouz': 186,'Oued Mliz': 187,'Chebika': 188,'Ghar El Melh': 189,'Bab Souika': 190,'El Alia': 191,'El Ala': 192,'Tataouine Nord': 193,'Menzel Chaker': 194,'Kalaat Landlous': 195,'Esskhira': 196,'Rohia': 197,'Regueb': 198,'Bargou': 199,'Sidi El Heni': 200,'Redeyef': 201,'Kesra': 202,'Hassi El Frid': 203,'Sidi Aich': 204,'Nefta': 205,'Beni Khedache': 206,'Jerissa': 207,'Nouvelle Matmata': 208,'Kebili Nord': 209,'Ghomrassen': 210,'Melloulech': 211,'Utique': 212,'Kalaa El Khasba': 213,'El Battan': 214,'Thibar': 215,'Maknassy': 216,'Amdoun': 217,'Takelsa': 218,'Ghannouche': 219,'Sidi Bouzid Est': 220,'Goubellat': 221,'El Aroussa': 222,'Saouef': 223,'Sidi Bou Rouis': 224,'Sejnane': 225,'Kasserine Sud': 226,'Smar': 227,'Bir El Haffey': 228,'Ouled Haffouz': 229,'Ben Oun': 230,'Kondar': 231,'Mezzouna': 232,'Jilma': 233,'Sbiba': 234,'Ghraiba': 235,'Bir Lahmar': 236,'Beja Sud': 237,'Joumine': 238,'Dhehiba': 239,'Haidra': 240,'Hbira': 241,'Menzel Bouzaiene': 242,'Gafsa Nord': 243,'Belkhir': 244,'Cebbala': 245,'Sidi Makhlouf': 246,'Jediliane': 247,'Touiref': 248,'Balta Bou Aouene': 249,'Menzel Habib': 250,'Matmata': 251,'Souk Jedid': 252,'Tameghza': 253,'Remada': 254,'Medenine Nord': 255,'Hezoua': 256,'Ghezala': 257,'El Faouar': 258,'El Ayoun': 259}, # Map DLG
+    "crs": {"CI-4P": 0,"BREAK": 1,"CAMIONNETTE": 2,"CI-2P": 3,"CABRIOLET": 4,"CI-5P": 5,"PLATEAU": 6,"FOURGON": 7,"MIXTE": 8,"SOLO": 9,"CI-3P": 10,"BENNE": 11,"CAMION": 12,"ENGIN": 13,"mult_CAROSSERIE": 14,"BUS": 15,"PR REM": 16,"ENGIN_AGRICOLE": 17,"REMORQUAGE": 18,"BD": 19,"BACHE": 20,"PR SREM": 21}, # Map CRS
+    "en": {"ES" : 0,"DI" : 1}, # Map EN
+    "sx" : {"M":0, "F":1,"JP":2,"C":3}, # Map SX
+}
+
+# Add range-based mappings (can be kept here or loaded separately)
+# These aren't directly used by the RF script's mapping section but are here for reference
+# If these features were meant to be binned first, that would be an extra preprocessing step
+predefined_mappings["age_objet_assuree"] = [{"min": 0, "max": 1, "level": 1}, {"min": 1, "max": 4, "level": 2}, {"min": 4, "max": 9, "level": 3}, {"min": 9, "max": 14, "level": 4}, {"min": 14, "max": 19, "level": 5}, {"min": 19, "max": 90, "level": 6}]
+predefined_mappings["age_client"] = [{"min": 18, "max": 24, "level": 1}, {"min": 24, "max": 29, "level": 2}, {"min": 29, "max": 39, "level": 3}, {"min": 39, "max": 49, "level": 4}, {"min": 49, "max": 59, "level": 5}, {"min": 59, "max": 69, "level": 6}, {"min": 69, "max": 79, "level": 7}, {"min": 79, "max": 120, "level": 8}]
+predefined_mappings["place"] = [{"min": 1, "max": 5, "level": 1}, {"min": 5, "max": 9, "level": 2}, {"min": 9, "max": 29, "level": 3}, {"min": 29, "max": 59, "level": 4}, {"min": 59, "max": 999, "level": 5}]
+predefined_mappings["anciennete"] = [{"min": 0, "max": 2, "level": 1}, {"min": 2, "max": 6, "level": 2}, {"min": 6, "max": 14, "level": 3}, {"min": 14, "max": 19, "level": 4}, {"min": 19, "max": 99, "level": 5}, {"min": 99, "max": 999, "level": 6}]
+predefined_mappings["puissance"] = [{"min": 0, "max": 3, "level": 1}, {"min": 3, "max": 4, "level": 2}, {"min": 4, "max": 6, "level": 3}, {"min": 6, "max": 9, "level": 4}, {"min": 9, "max": 14, "level": 5}, {"min": 14, "max": 49, "level": 6}, {"min": 49, "max": 999, "level": 7}]
+predefined_mappings["valeur_ranges"] = [{"min": 0, "max": 9999, "level": 1}, {"min": 9999, "max": 19999, "level": 2}, {"min": 19999, "max": 29999, "level": 3}, {"min": 29999, "max": 49999, "level": 4}, {"min": 49999, "max": 99999, "level": 5}, {"min": 99999, "max": 499999, "level": 6}, {"min": 499999, "max": 999999, "level": 7}, {"min": 999999, "max": 9999999, "level": 8}]
+predefined_mappings["charge_utile"] = [{"min": 0, "max": 1, "level": 1}, {"min": 1, "max": 1.6, "level": 2}, {"min": 1.6, "max": 3, "level": 3}, {"min": 3, "max": 10, "level": 4}, {"min": 10, "max": 999, "level": 5}]
+
+def get_level_insurance(value, ranges_list):
+    """
+    Determines the level for a given value based on a list of range dictionaries.
+    Each dictionary in ranges_list should have 'min', 'max', and 'level'.
+    Handles both integer and float values based on the type of 'value'.
+    """
+    if not isinstance(ranges_list, list):
+        raise TypeError("ranges_list must be a list of dictionaries.")
+    if not ranges_list:
+        raise ValueError("ranges_list cannot be empty.")
+
+    for range_def in ranges_list:
+        if not all(k in range_def for k in ["min", "max", "level"]):
+            raise ValueError("Each range_def must contain 'min', 'max', and 'level' keys.")
+        
+        try:
+            min_val = type(value)(range_def["min"])
+            max_val = type(value)(range_def["max"])
+        except (ValueError, TypeError) as e:
+            # Be more specific about which value in range_def failed
+            failed_key = "min" if isinstance(range_def["min"], str) and not range_def["min"].replace('.', '', 1).isdigit() else "max"
+            raise TypeError(f"Value for '{failed_key}' ('{range_def[failed_key]}') in range_def {range_def} could not be cast to the type of input value {value} (type {type(value).__name__}): {e}")
+
+
+        # Logic: min_val <= value < max_val
+        # If value can be equal to max_val for the last range, it needs special handling or adjustment of ranges.
+        # Current logic: max is exclusive.
+        if min_val <= value < max_val:
+            return range_def["level"]
+    
+    # Handle the case where value might be equal to the max of the last range
+    # (assuming ranges are contiguous and the last max is inclusive for the final category)
+    # Or, if value is simply outside all defined ranges.
+    last_range = ranges_list[-1]
+    last_min_val = type(value)(last_range["min"])
+    last_max_val = type(value)(last_range["max"]) # This max might represent an open upper bound in some contexts.
+
+    # If your data implies the last range's max is inclusive:
+    if last_min_val <= value <= last_max_val : # Modified to include last_max_val
+        return last_range["level"]
+
+    raise ValueError(f"Value {value} (type: {type(value).__name__}) is out of the defined mapping ranges or does not fit exclusivity rules. Last range was {last_range}. Ranges: {ranges_list}")

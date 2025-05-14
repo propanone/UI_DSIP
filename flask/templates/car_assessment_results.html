@@ -1,0 +1,119 @@
+{% extends "layout.html" %}
+{% block title %}{{ title_prefix }}{% endblock %} {# Simplified title #}
+
+{% block head %}
+{{ super() }}
+{# Chart.js scripts commented out as no charts are currently used here #}
+{# <script src="{{ url_for('static', filename='vendor/chartjs/chart.min.js') }}"></script> #}
+{# <script src="{{ url_for('static', filename='js/chart_themes.js') }}"></script> #}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="text-center mb-10">
+        <i data-lucide="file-check-2" class="mx-auto h-12 w-12 text-primary mb-4"></i>
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">Car Risk Assessment Results</h1>
+        <p class="mt-3 text-lg text-muted-foreground">
+            Analysis performed using our
+            <span class="font-semibold text-primary">
+                {{ model_used|replace('_', ' ')|replace('mlp', 'MLP')|title }} Engine
+                {% if model_used == 'xgboost' %}
+                     <span class="ml-1.5 inline-flex items-center rounded-full bg-green-100 dark:bg-green-700/30 px-2.5 py-1 text-xs font-semibold text-green-700 dark:text-green-300 border border-green-300 dark:border-green-600">
+                        <i data-lucide="trending-up" class="h-3.5 w-3.5 mr-1.5"></i>XGBoost
+                    </span>
+                {% endif %}
+                {# Removed elif for MindSpore and Random Forest as they are no longer options #}
+            </span>
+        </p>
+    </div>
+
+    <!-- Main Result Card -->
+    <div class="card mb-8 shadow-lg">
+        <div class="card-header items-center py-5 px-6 rounded-t-lg
+            {% if prediction == 1 %} bg-destructive/10 dark:bg-destructive/20 border-b-2 border-destructive/30 dark:border-destructive/40
+            {% else %} bg-green-600/10 dark:bg-green-700/20 border-b-2 border-green-600/30 dark:border-green-600/40 {% endif %}">
+            <div class="flex items-center">
+                {% if prediction == 1 %}
+                    <i data-lucide="alert-triangle" class="h-8 w-8 mr-3 text-destructive dark:text-red-400"></i>
+                {% else %}
+                    <i data-lucide="shield-check" class="h-8 w-8 mr-3 text-green-600 dark:text-green-400"></i> {# Changed icon #}
+                {% endif %}
+                <h3 class="card-title text-2xl font-semibold
+                    {% if prediction == 1 %} text-destructive dark:text-red-400
+                    {% else %} text-green-700 dark:text-green-400 {% endif %}">
+                    Prediction: <span class="font-bold">{{ "Risky Client" if prediction == 1 else "Not Risky Client" }}</span>
+                </h3>
+            </div>
+        </div>
+        <div class="card-content p-6 space-y-6">
+            <div>
+                <h4 class="text-sm font-medium text-muted-foreground mb-2">Risk Probability Distribution:</h4>
+                <div class="relative pt-1">
+                    <div class="overflow-hidden h-4 mb-2 text-xs flex rounded-full bg-muted/70 dark:bg-muted/40">
+                        <div style="width:{{ probability[0]*100 }}%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500 dark:bg-green-600 transition-all duration-500 ease-out" title="Not Risky: {{ "%.2f"|format(probability[0]*100) }}%"></div>
+                        <div style="width:{{ probability[1]*100 }}%" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-red-500 dark:bg-red-600 transition-all duration-500 ease-out" title="Risky: {{ "%.2f"|format(probability[1]*100) }}%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs font-medium text-muted-foreground mt-1">
+                        <span class="text-green-600 dark:text-green-500">Not Risky: {{ "%.1f"|format(probability[0]*100) }}%</span>
+                        <span class="text-red-600 dark:text-red-500">Risky: {{ "%.1f"|format(probability[1]*100) }}%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-border/40 dark:border-border/20 pt-6">
+                <h4 class="text-sm font-medium text-muted-foreground mb-2 flex items-center">
+                    <i data-lucide="message-circle-heart" class="h-4 w-4 mr-2 text-primary"></i>AI-Generated Risk Insights (Mock LLM): {# Changed icon #}
+                </h4>
+                <div class="text-sm text-foreground p-4 bg-accent dark:bg-accent/50 rounded-md border border-border/70 dark:border-border/30 prose prose-sm dark:prose-invert max-w-none [&_strong]:text-primary dark:[&_strong]:text-sky-400">
+                    {{ llm_summary | safe }}
+                </div>
+            </div>
+
+            <div class="border-t border-border/40 dark:border-border/20 pt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                <div>
+                    <h4 class="text-sm font-medium text-muted-foreground mb-1 flex items-center"><i data-lucide="activity" class="h-4 w-4 mr-1.5"></i>Predictive Loss Rate (S/P):</h4>
+                    <p class="text-2xl font-semibold text-foreground tabular-nums">
+                        {{ "%.3f"|format(s_p_value) }}
+                    </p>
+                    <p class="text-xs text-muted-foreground">A conceptual metric indicating predicted loss ratio.</p>
+                </div>
+                <div>
+                    <h4 class="text-sm font-medium text-muted-foreground mb-1 flex items-center"><i data-lucide="landmark" class="h-4 w-4 mr-1.5"></i>Estimated Base Premium:</h4>
+                    <p class="text-2xl font-semibold text-foreground tabular-nums">
+                        {{ "%.2f"|format(recommended_premium) }} <span class="text-sm font-normal">DT</span>
+                    </p>
+                    <p class="text-xs text-muted-foreground">Illustrative and subject to final underwriting.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Summary Card -->
+    <div class="card">
+        <div class="card-header flex items-center space-x-3">
+            <i data-lucide="list-ordered" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+            <h3 class="card-title text-xl">Submitted Client & Vehicle Parameters</h3>
+        </div>
+        <div class="card-content p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+                {% for field_name, value in form_data_display.items() %}
+                    {% if field_name not in ['csrf_token', 'submit', 'model_choice'] %} {# model_choice should not be in form_data_display if removed from form #}
+                        {% set field = form[field_name] if form[field_name] else None %}
+                        <div class="flex justify-between py-2 border-b border-border/50 dark:border-border/20">
+                            <dt class="font-medium text-muted-foreground">{{ field.label.text if field and field.label else field_name|replace('_', ' ')|title }}:</dt>
+                            <dd class="text-foreground text-right truncate ml-2" title="{{value}}">{{ value }}</dd>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                 {# Removed explicit display of model_choice here as it's not a user input anymore #}
+            </dl>
+        </div>
+    </div>
+
+    <div class="text-center mt-10">
+        <a href="{{ url_for('car_assessment_route') }}" class="btn btn-outline btn-lg text-base">
+            <i data-lucide="arrow-left-circle" class="mr-2 h-5 w-5"></i> Back to Assessment Form {# Changed icon #}
+        </a>
+    </div>
+</div>
+{% endblock %}

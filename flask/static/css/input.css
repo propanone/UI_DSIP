@@ -1,0 +1,29 @@
+/* static/css/input.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: Add custom base styles or components here */
+/* For example, if you want to define some global styles for `body` or specific Shadcn variables */
+/* This is where you'd define the HSL variables if they are not directly in tailwind.config.js */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    /* ... other light mode variables ... */
+    --radius: 0.5rem; /* Example */
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    /* ... other dark mode variables ... */
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1; /* Optional: for better font rendering */
+  }
+}

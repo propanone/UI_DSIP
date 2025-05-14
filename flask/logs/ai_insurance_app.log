@@ -1,0 +1,53 @@
+2025-05-12 15:31:01,290 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:31:04,824 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:31:30,483 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:31:35,847 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:34:27,418 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:34:31,154 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:35:11,267 WARNING: Form validation failed: {'age_client': ['This field is required.'], 'anciennete': ['This field is required.'], 'age_objet_assuree': ['This field is required.'], 'puissance': ['This field is required.'], 'place': ['This field is required.'], 'charge_utile': ['This field is required.'], 'valeur_venale': ['This field is required.'], 'valeur_neuve': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:108]
+2025-05-12 15:41:33,196 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:41:36,684 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:41:59,694 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:42:10,328 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:42:13,859 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:42:48,864 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:42:52,149 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:46:06,233 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:46:10,524 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:53:06,896 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:53:10,472 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:53:17,894 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:53:48,205 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 15:53:51,776 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:02:23,142 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:02:26,643 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:03:02,722 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:03:06,410 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:03:36,536 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:03:39,833 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:06:19,998 WARNING: Form validation failed: {'age_client': ['This field is required.'], 'anciennete': ['This field is required.'], 'age_objet_assuree': ['This field is required.'], 'puissance': ['This field is required.'], 'place': ['This field is required.'], 'charge_utile': ['This field is required.'], 'valeur_venale': ['This field is required.'], 'valeur_neuve': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:108]
+2025-05-12 16:13:26,004 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:13:29,072 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 16:22:49,391 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Ariana Ville', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 1, 'age_objet_assuree': 3, 'puissance': 120, 'place': 5, 'charge_utile': 0.5, 'valeur_venale': 1500, 'valeur_neuve': 2121, 'model_choice': 'random_forest', 'submit': True, 'csrf_token': 'IjM5MDkxZjIyYmRlN2U1YjJhZDE2N2EyN2EwOThmYjhjYTY2NGE1NDki.aCIRjA.EM3xbSTtNM5XgCmXObRvBLNYN5M'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:46]
+2025-05-12 16:22:49,396 ERROR: FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models_huawei\scaler.pkl. Ensure it's trained and path is correct in config. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:100]
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services_huawei\data_processing_huawei.py", line 15, in preprocess_form_data
+    with open(scaler_path, 'rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'C:\\Users\\Sushi\\Documents\\GitHub\\DSIP\\flask\\models_huawei\\scaler.pkl'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py", line 48, in assess_risk_route
+    processed_features_np, raw_input_dict_for_display = preprocess_form_data(
+                                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Sushi\Documents\GitHub\DSIP\flask\services_huawei\data_processing_huawei.py", line 18, in preprocess_form_data
+    raise FileNotFoundError(f"Scaler file not found at {scaler_path}. Ensure it's trained and path is correct in config.")
+FileNotFoundError: Scaler file not found at C:\Users\Sushi\Documents\GitHub\DSIP\flask\models_huawei\scaler.pkl. Ensure it's trained and path is correct in config.
+2025-05-12 16:22:54,348 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 17:42:47,896 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-12 17:42:51,588 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-13 15:35:01,485 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-13 15:35:06,523 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]
+2025-05-13 15:36:24,676 INFO: AI Insurance App startup [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app_huawei.py:30]

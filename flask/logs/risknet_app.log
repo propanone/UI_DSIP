@@ -1,0 +1,30 @@
+2025-05-14 00:11:51,487 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:11:56,140 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:13:00,975 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:13:05,657 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:14:40,924 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:14:47,261 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:20:40,915 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:20:45,246 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:20:50,902 WARNING: Form validation failed: {'age_client': ['This field is required.'], 'anciennete': ['This field is required.'], 'age_objet_assuree': ['This field is required.'], 'puissance': ['This field is required.'], 'place': ['This field is required.'], 'charge_utile': ['This field is required.'], 'valeur_venale': ['This field is required.'], 'valeur_neuve': ['This field is required.']} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:145]
+2025-05-14 00:23:14,439 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:23:20,456 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 00:23:43,055 INFO: Form submitted with data: {'sexe': 'M', 'age_client': 35, 'civilite': 'Mr', 'delegation': 'Ariana Ville', 'activite': 'EDUCATION_FORMATION', 'marque': 'RENAULT', 'carrosserie': 'CI-4P', 'usage': 'VP', 'classe': '0.0', 'energie': 'ES', 'anciennete': 5, 'age_objet_assuree': 3, 'puissance': 7, 'place': 5, 'charge_utile': 0.5, 'valeur_venale': 35000, 'valeur_neuve': 70000, 'submit': True, 'csrf_token': 'IjAxMDE1NGRlNWIxNjhlZTE1ZjE3NGUzMmY1MDQyZTg1ZjM2MDAyMWUi.aCPUaw.HOielSJBp9OhAkQ6I9V4C0M9FNM'} [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:79]
+2025-05-14 00:23:43,066 INFO: Processed features shape: (1, 17) [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:89]
+2025-05-14 00:23:43,072 INFO: Prediction: 0, Probability: [0.98825777 0.01174223] [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:95]
+2025-05-14 00:23:43,073 INFO: Gemini API configured successfully with model 'gemini-1.5-flash-latest'. [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:20]
+2025-05-14 00:23:43,074 INFO: Sending prompt to Gemini: 
+    Analyze the following car insurance risk assessment and provide a concise, helpful summary for an underwriter.
+    The client has been predicted as **Not Risky**.
+    The confidence in this predi... [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:74]
+2025-05-14 00:23:44,280 INFO: Gemini response received. Safety:  [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:84]
+2025-05-14 00:23:44,282 INFO: Gemini summary: The model predicts a low-risk profile with 98.8% confidence.  The client's age (35) and relatively new vehicle (3 years old, low horsepower) likely contribute to this assessment. Standard underwriting procedures are recommended.
+ [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\services\llm_service.py:87]
+2025-05-14 00:23:44,284 INFO: LLM Summary: The model predicts a low-risk profile with 98.8% confidence.  The client's age (35) and relatively new vehicle (3 years old, low horsepower) likely contribute to this assessment. Standard underwriting procedures are recommended.
+ [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:109]
+2025-05-14 09:28:15,364 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 09:28:19,480 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 09:39:05,846 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 09:39:10,538 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 22:08:40,597 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]
+2025-05-14 22:08:47,311 INFO: RiskNet AI Car Insurance App startup - ML Model Loaded [in C:\Users\Sushi\Documents\GitHub\DSIP\flask\app.py:56]

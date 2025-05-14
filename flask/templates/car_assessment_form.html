@@ -1,0 +1,139 @@
+{% extends "layout.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="text-center mb-10">
+        <i data-lucide="clipboard-edit" class="mx-auto h-12 w-12 text-primary mb-4"></i> {# Changed icon #}
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">Client Auto Risk Assessment</h1>
+        <p class="mt-4 text-lg leading-relaxed text-muted-foreground max-w-2xl mx-auto">
+            Provide client and vehicle details to receive an AI-powered risk assessment for auto insurance.
+        </p>
+    </div>
+
+    <form method="POST" novalidate class="space-y-8">
+        {{ form.hidden_tag() }}
+
+        <!-- Client Information Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="user-round" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Client Information</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6"> {# Added padding to card-content #}
+                <div>
+                    {{ form.sexe.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.sexe(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.sexe.errors else "")) }}
+                    {% if form.sexe.errors %}{% for error in form.sexe.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.age_client.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.age_client(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.age_client.errors else ""), placeholder="e.g., 35") }}
+                    {% if form.age_client.errors %}{% for error in form.age_client.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.civilite.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.civilite(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.civilite.errors else "")) }}
+                    {% if form.civilite.errors %}{% for error in form.civilite.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.delegation.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.delegation(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.delegation.errors else "")) }}
+                    {% if form.delegation.errors %}{% for error in form.delegation.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2">
+                    {{ form.activite.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.activite(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.activite.errors else "")) }}
+                    {% if form.activite.errors %}{% for error in form.activite.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle Information Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="car-front" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Vehicle Information</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6">
+                <div>
+                    {{ form.marque.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.marque(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.marque.errors else "")) }}
+                    {% if form.marque.errors %}{% for error in form.marque.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.carrosserie.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.carrosserie(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.carrosserie.errors else "")) }}
+                    {% if form.carrosserie.errors %}{% for error in form.carrosserie.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.usage.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.usage(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.usage.errors else "")) }}
+                    {% if form.usage.errors %}{% for error in form.usage.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.classe.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.classe(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.classe.errors else "")) }}
+                    {% if form.classe.errors %}{% for error in form.classe.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2"> {# Making fuel type full width for balance or keep 2-col #}
+                    {{ form.energie.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.energie(class="form-select w-full" + (" !border-destructive dark:!border-destructive/50" if form.energie.errors else "")) }}
+                    {% if form.energie.errors %}{% for error in form.energie.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Technical & Financial Card -->
+        <div class="card">
+            <div class="card-header flex items-center space-x-3">
+                <i data-lucide="gauge" class="h-6 w-6 text-primary"></i> {# Changed icon #}
+                <h3 class="card-title text-xl">Vehicle Technical & Financial Details</h3>
+            </div>
+            <div class="card-content grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 pt-4 pb-6 px-6">
+                <div>
+                    {{ form.anciennete.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.anciennete(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.anciennete.errors else ""), placeholder="e.g., 5") }}
+                    {% if form.anciennete.errors %}{% for error in form.anciennete.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.age_objet_assuree.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.age_objet_assuree(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.age_objet_assuree.errors else ""), placeholder="e.g., 3") }}
+                    {% if form.age_objet_assuree.errors %}{% for error in form.age_objet_assuree.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.puissance.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.puissance(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.puissance.errors else ""), placeholder="e.g., 7 (Fiscal HP)") }}
+                    {% if form.puissance.errors %}{% for error in form.puissance.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.place.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.place(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.place.errors else ""), placeholder="e.g., 5") }}
+                    {% if form.place.errors %}{% for error in form.place.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.charge_utile.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.charge_utile(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.charge_utile.errors else ""), placeholder="e.g., 0.5 (if commercial)") }}
+                    {% if form.charge_utile.errors %}{% for error in form.charge_utile.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                <div>
+                    {{ form.valeur_venale.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.valeur_venale(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.valeur_venale.errors else ""), placeholder="e.g., 35000") }}
+                    {% if form.valeur_venale.errors %}{% for error in form.valeur_venale.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+                 <div class="md:col-span-2">
+                    {{ form.valeur_neuve.label(class="block text-sm font-medium mb-1.5 text-foreground") }}
+                    {{ form.valeur_neuve(class="form-input w-full" + (" !border-destructive dark:!border-destructive/50" if form.valeur_neuve.errors else ""), placeholder="e.g., 70000") }}
+                    {% if form.valeur_neuve.errors %}{% for error in form.valeur_neuve.errors %}<p class="mt-1 text-xs text-destructive">{{ error }}</p>{% endfor %}{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Choice Card removed -->
+
+        <div class="flex justify-center pt-6">
+            {{ form.submit(class="btn btn-primary btn-lg w-full md:w-auto md:px-12 text-base") }} {# Wider button on desktop #}
+        </div>
+    </form>
+</div>
+{% endblock %}
